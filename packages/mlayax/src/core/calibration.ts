@@ -25,8 +25,10 @@ export const TEMP_MAX = 5.0;
  *
  * Numeric strings are accepted (as `float("1.5")` is); booleans are not, because `float(True)`
  * succeeding is an accident of Python's type hierarchy that upstream explicitly guards against.
+ * Exported because the load-time validation ("Calibration temperatures must be finite and
+ * positive") needs the same coercion the clamp does — two spellings of it would drift.
  */
-function coerceTemperature(value: unknown): number | null {
+export function coerceTemperature(value: unknown): number | null {
   if (typeof value === "boolean") return null;
   if (typeof value === "number") return value;
   if (typeof value === "string" && value.trim() !== "") {

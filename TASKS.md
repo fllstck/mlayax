@@ -270,17 +270,33 @@ criteria keyed only `false`/`true`). All of it is now ported, so a malformed que
 here with a described problem instead of producing a slightly different prompt.
 
 
-### Phase 3 — MLX runtime (`src/mlx`) inside `@fllstck/mlayax`
+### Phase 3 — MLX runtime (`src/mlx`) inside `@fllstck/mlayax` — **DONE 2026-10-06** (except Hub loading, see 3b)
 
-- [ ] Decide vendoring: **default = vendor node-mlx's MIT `dist/` JS layer** as-is (proven), with a
+- [x] Decide vendoring: **default = vendor node-mlx's MIT `dist/` JS layer** as-is (proven), with a
       task noted for a slim wrapper later. Keep `vendor/node-mlx/LICENSE` and add it to `NOTICE`.
-- [ ] Binary resolution: node-mlx's JS loads `build/Release/node_mlx.node`. Point it at the platform
+      **Refinement made after looking at the actual dependency:** only `dist/core.js` is vendored, not
+      the whole `dist/`. Upstream's `nn/`, `optimizers/` and `utils.js` are ~400 KB / ~50 files that
+      the runtime never imports — the MLX ops we need are on the addon, and the one `nn` value the
+      port threaded through (`DecisionModel`'s constructor argument) was **never read**. Shipping
+      400 KB of dead JavaScript would have eaten most of the façade's 300 KB budget. Vendored as
+      `vendor/node-mlx/core.cjs` (`.cjs` because the package is ESM, so a `.js` file would be parsed
+      as ESM and `require` would not exist), with `PATCHES.md` carrying the exact one-line diff and a
+      `curl | diff` command to re-verify it. `NOTICE` and `vendor/node-mlx/README.md` record it.
+- [x] Binary resolution: node-mlx's JS loads `build/Release/node_mlx.node`. Point it at the platform
       package instead (patch the resolution or shim `require`), and **test on Node and Bun**.
-- [ ] Port `model.ts` + `agent.ts`. Preserve and comment these hard-won behaviours:
+      `vendor/node-mlx/native-binding.cjs` resolves `$MLAYAX_NATIVE_DIR` then
+      `@fllstck/mlayax-darwin-arm64/lib/node_mlx.node`, and rejects non-darwin/non-arm64 up front.
+      Its decision is a **pure function** (`selectBinding`), so all seven guard cases — wrong
+      platform, Rosetta, missing payload, override precedence, "tried these paths" — are unit-tested
+      on Linux CI, where the guards cannot otherwise be reached. Verified on **Node 24.15.0 and Bun
+      1.3.13**: identical answers, load 160 ms on Bun.
+- [x] Port `model.ts` + `agent.ts`. Preserve and comment these hard-won behaviours:
       - all scalar constants created in the activation dtype (`mx.array(1, x.dtype)`); a bare JS `0`
         in `mx.maximum(intArray, 0)` breaks the gather, and a bare `1`/`2`/`sqrt(2)` silently upcasts
         fp16 → fp32 for the rest of the graph (**20 % cost**). Add a test that asserts the dtype of
         the gelu output is f16.
+        **Half of this claim is retracted below — see the corrections note.** The dtype test exists
+        and passes: `gelu(f16) -> float16`, `relu(int32) -> int32`.
       - weights pre-split at load (QKV/MLP/in_proj) — required for shape-polymorphic graphs and it is
         the reason `mx.compile(shapeless)` is even an option;
       - `takeAlongAxis(h, expandDims(pos, -1), 1)` for markers (`mx.take` with a `[b,count]` index
@@ -293,12 +309,48 @@ here with a described problem instead of producing a slightly different prompt.
         opt-in (`MLAYAX_SHAPELESS=1`), documented;
       - `mx.tidy` default on for the sync path, **off** on the async service path (dispose feeds
         explicitly).
+      Also added a typed `MxCore`/`MlxArray` surface (`src/mlx/types.ts`) instead of threading the
+      addon as `any`: a misspelled op or a wrong `axis` was previously a runtime failure on the one
+      code path that needs a GPU. Request-level `usage` (`input_tokens`, `state_tokens`,
+      `state_tokens_dropped`, `truncated`, `truncated_questions`, `options`) is now composed, which
+      the spike had stubbed to `{ output_tokens: 0 }`.
+- [x] Fail fast on: non-darwin, non-arm64, MLX version/metallib mismatch, missing fused symbols.
+      Platform and missing-payload guards are done and tested. The MLX **version/metallib** check and
+      the "another `libmlx` is already resident" mixing guard need the shipped payload to compare
+      against, so they stay in Phase 5 as §5 already says — the symbol check has a placeholder
+      assertion that `fast.layerNorm` / `fast.rope` / `fast.scaledDotProductAttention` all exist.
 - [ ] Hugging Face loading (new work, see Phase 3b):
       `load("aac6fef/laya-mlx")` with disk cache, `HF_TOKEN`, `HF_HOME`, offline mode, revision pin,
       and per-file checksum verification. Weights are ~803 MiB and must never be bundled.
-- [ ] Fail fast on: non-darwin, non-arm64, MLX version/metallib mismatch, missing fused symbols.
-- [ ] Acceptance: `load()` from a local directory and from the Hub cache both work; a single
+      *Not done — this is the next item.*
+- [x] Acceptance: `load()` from a local directory and from the Hub cache both work; a single
       `predict()` returns the fixture answers; run it under Node and Bun.
+      *Local directory: done and verified. Hub cache: **not yet** — that is Phase 3b, so half of this
+      acceptance line is still open.* Measured on the real checkpoint: **fp32 bit-exact against
+      Python `laya_mlx` (Δ 0, 61/61 fields per case), fp16 within 4e-4, batched == solo**, on Node 24
+      and Bun 1.3.13. The checkpoint's temperature warning fires verbatim
+      (`clamping choice:11+=0.1006`). Runtime: 8 integration tests in ~1.4 s.
+
+**Two corrections from Phase 3, both found by testing a claim instead of repeating it:**
+
+1. *"a bare JS `0` in `mx.maximum(intArray, 0)` breaks the gather"* — **not reproducible.**
+   `takeAlongAxis` accepts float32 indices both eagerly and under `mx.compile`; a bare `0` does not
+   break anything, it just makes the index tensor float32. The int32 form is kept because the indices
+   are conceptually integers and the promotion is avoidable work, but the justification in the
+   comment was wrong and has been rewritten. This is exactly the class of thing the port's comments
+   invite a reader to over-trust.
+2. *hazard 5, "the shapeless profile produces the same answers"* — **too strong.** Measured: the
+   shapeless (manual-attention) profile differs from the default (fused `fast.sdpa`) profile by up to
+   **Δ 3e-4** in fp16, consistent with PORTING.md's Δ 1e-3 / 9e-4 rows. Identical numbers are not the
+   contract and never were; the two real properties are that **no shape error occurs when the length
+   changes** and **the decision does not move**. The test now asserts those two, with a 1e-3 gate on
+   the numbers, rather than asserting Δ 0 and being wrong.
+
+**One near-miss worth recording:** Phase 3 added `vendor/` to the package but `files` still said
+`["dist", "README.md", "LICENSE", "NOTICE"]`, so the published tarball would have shipped a façade
+whose runtime could not load. Caught by the size gate's allowlist rather than by a test — the pack
+job in Phase 7 is what should catch this class permanently.
+
 
 ### Phase 3b — Hugging Face fetcher (`hub.ts`)
 

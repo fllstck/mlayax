@@ -19,6 +19,7 @@ export { collapsedOptions, shapeAnswer } from "./answers.js";
 export {
   answerConfidence,
   clampTemperature,
+  coerceTemperature,
   confidenceFromProbs,
   formatSignificant,
   rejectedTemperatureEntries,
