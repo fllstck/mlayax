@@ -204,28 +204,71 @@ Three notes on decisions taken inside this phase:
    depends on artifacts that do not exist yet, so a workflow written now could only be decorative.
    It is the one file in §3's layout that is intentionally absent.
 
-### Phase 2 — Extract `src/core` (pure, portable, fully unit-tested)
+### Phase 2 — Extract `src/core` (pure, portable, fully unit-tested) — **DONE 2026-10-06**
 
-- [ ] Move `common.ts` → `src/core/{questions,ppjson,sequence,calibration,answers}.ts` (split by
+- [x] Move `common.ts` → `src/core/{questions,ppjson,sequence,calibration,answers}.ts` (split by
       concern; keep the public functions identical in behaviour).
-- [ ] Move `tokenizer.ts` → `src/core/tokenizer.ts`.
-- [ ] Keep the exact semantics that parity depends on:
+      Added `src/core/index.ts` as the internal barrel; `src/index.ts` re-exports it.
+- [x] Move `tokenizer.ts` → `src/core/tokenizer.ts` (depends only on `@huggingface/tokenizers`,
+      pinned `^0.2.0` — the version the spike was measured on).
+- [x] Keep the exact semantics that parity depends on:
       - Python-style JSON (`", "` / `": "` separators) for structured states/criteria;
       - `dict.fromkeys` labels render as `label` alone, never `label: null` (the bug we hit);
+        **and `0` / `false` are legitimate descriptions**, so the check is explicitly
+        nullish-or-empty rather than truthiness — the inverse trap;
       - `noul` `labels` option **must** replace `false`/`true` in the prompt — this is exactly the bug
         `@johnhenry/laya` 0.3.2 ships (see `docs/PORTING.md`, ecosystem survey). Add a regression test
-        that asserts the rendered strings and the token ids.
-      - `round4` uses banker's rounding; temperature clamped to [0.5, 5] with the warning text
-        preserved verbatim;
-      - truncation: `max_len`, `head_max_len`, right-truncate text states, left-truncate turn lists;
-      - usage/truncation stats (`state_tokens_dropped`, `truncated_questions`, collapsed options).
-- [ ] Unit tests (no native): prompt building for all three types, criteria as dict/list/structured,
+        that asserts the rendered strings and the token ids. **Done both ways:**
+        `questions.test.ts` asserts the rendered strings; `prepare.fixture.test.ts` asserts the token
+        ids against the Python reference for the same case.
+      - temperature clamped to [0.5, 5] with the warning text preserved verbatim — the warning is
+        built at load time (Phase 3), so `calibration.ts` now owns `formatSignificant` (C `%.4g`),
+        `rejectedTemperatureEntries` and `temperatureClampWarning`, each pinned to CPython's output;
+      - truncation: `max_len`, `head_max_len`, right-truncate text states, left-truncate turn lists —
+        direction is derived from the state's shape (string vs list), not passed in;
+      - usage/truncation stats (`state_tokens_dropped`, `truncated_questions`, collapsed options):
+        the per-question half (`PrefixStats`, `SequenceStats`, `collapsedOptions`) is here; the
+        request-level `usage` object is composed in Phase 3 with the forward pass.
+- [x] Unit tests (no native): prompt building for all three types, criteria as dict/list/structured,
       custom noul labels, temperature clamping + warning capture, truncation boundaries, answer
-      shaping/rounding, confidence formulas, entropy/top-2 features, json edge cases (unicode,
-      floats), tokenizer special-token resolution.
-- [ ] Fixture tests: golden `prepare()` outputs for the fixture cases (ids + markers per question),
+      shaping/rounding, confidence formulas, json edge cases (unicode, floats), tokenizer
+      special-token resolution. **124 tests, no native dependency, green on any platform.**
+      *(`entropy/top-2 features` is a model-graph concern — it is a Phase 3 test, not core.)*
+- [x] Fixture tests: golden `prepare()` outputs for the fixture cases (ids + markers per question),
       generated from the Python reference and checked in.
-- [ ] Acceptance: `vitest run` green on any platform (this is what unit CI runs).
+      `tools/reference/make_prepare_fixture.py` drives the real `laya_mlx` and writes
+      `test/fixtures/ref/prepare.json` (7 cases, 11 questions, pose-by-pose ids/markers/stats).
+      Deliberately uses the **tiny** fixture tokenizer with its own `max_len` 64 / `head_max_len` 32,
+      so truncation and option-collapsing actually fire rather than being unreachable branches.
+- [x] Acceptance: `vitest run` green on any platform (this is what unit CI runs).
+      Measured: 124 passed; coverage **97.99 % statements, 95.25 % branches, 100 % functions**
+      (core bar is 90 %). `verify` now also runs `tsc -p tsconfig.test.json`, so the tests are
+      type-checked rather than only transpiled.
+
+Two findings in this phase that change what we knew:
+
+1. **The spike's `round4` was wrong, and is fixed.** It snapped any value *near* a 4-decimal half to
+   an exact tie and then rounded to even, so `0.00005` returned `0` where Python returns `0.0001`. It
+   disagreed with CPython on **120 of 8 017** values sampled against `round(v, 4)`. The replacement
+   uses `Number(x.toFixed(4))` ("as close to zero as possible" on the exact double), which matches
+   CPython on **8 016 of 8 017** — the remaining difference is only that we now preserve signed zero,
+   which the tolerance version lost. This did not show up in parity because no measured answer landed
+   within `1e-9` of a half, but `confidence` is exactly the kind of small number that can. Verified as
+   **identity on all 90 numbers in the committed fp32/fp16 references**, so parity cannot regress.
+   *This is a third correction for `docs/PORTING.md`'s corrections section (Phase 8).*
+2. **Python's `int` vs `float` cannot be reproduced exactly from JS.** `json.dumps(2)` is `"2"` but
+   `json.dumps(2.0)` is `"2.0"`; JS has one number type and `JSON.parse` discards whether the source
+   literal had a decimal point. `pyNumberRepr` renders integral values as Python renders an `int`
+   (the common case in rubric criteria and structured state) and fractional values as Python renders
+   a `float`, which is correct for everything except an **integral float literal** (`{"amount": 2.0}`
+   renders `2`). The case is pinned by a test and documented on the function. If it ever matters,
+   callers can send such values as strings. *Worth a README line in Phase 8.*
+
+Also worth recording: upstream's `Agent._to_internal` validates far more than the spike port did
+(empty/blank instructions, string-only choice labels, unique labels, no null score levels, noul
+criteria keyed only `false`/`true`). All of it is now ported, so a malformed question is rejected
+here with a described problem instead of producing a slightly different prompt.
+
 
 ### Phase 3 — MLX runtime (`src/mlx`) inside `@fllstck/mlayax`
 

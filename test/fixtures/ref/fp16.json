@@ -1,0 +1,185 @@
+{
+  "dtype": "float16",
+  "cases": [
+    {
+      "label": "three questions",
+      "state": "I was billed twice. Please refund the duplicate today.",
+      "questions": {
+        "department": {
+          "type": "choice",
+          "instructions": "Which team should handle this request?",
+          "criteria": {
+            "billing": "invoices, payments, refunds",
+            "technical": "bugs and outages",
+            "sales": "new purchases"
+          }
+        },
+        "urgency": {
+          "type": "score",
+          "instructions": "How urgent is this request?",
+          "criteria": ["not urgent", "soon", "critical"]
+        },
+        "refund": {
+          "type": "noul",
+          "instructions": "Does the customer ask for money back?"
+        }
+      },
+      "answers": {
+        "department": {
+          "type": "choice",
+          "confidence": 0.8174,
+          "answer_confidence": 0.9587,
+          "action": {
+            "act_probability": 1.0
+          },
+          "choice": "billing",
+          "probabilities": {
+            "billing": 0.9587,
+            "technical": 0.0227,
+            "sales": 0.0187
+          }
+        },
+        "urgency": {
+          "type": "score",
+          "confidence": 0.0934,
+          "answer_confidence": 0.513,
+          "action": {
+            "act_probability": 1.0
+          },
+          "score": 1.3599,
+          "legend": {
+            "0": "not urgent",
+            "1": "soon",
+            "2": "critical"
+          },
+          "probabilities": {
+            "0": 0.153,
+            "1": 0.334,
+            "2": 0.513
+          }
+        },
+        "refund": {
+          "type": "noul",
+          "confidence": 0.8215,
+          "answer_confidence": 0.8215,
+          "action": {
+            "act_probability": 1.0
+          },
+          "noul": 0.8215
+        }
+      }
+    },
+    {
+      "label": "12 options (clamped 11+ bucket)",
+      "state": "The widget arrived scratched and the manual is missing.",
+      "questions": {
+        "category": {
+          "type": "choice",
+          "instructions": "Which category fits best?",
+          "criteria": {
+            "label_0": "description number 0",
+            "label_1": "description number 1",
+            "label_2": "description number 2",
+            "label_3": "description number 3",
+            "label_4": "description number 4",
+            "label_5": "description number 5",
+            "label_6": "description number 6",
+            "label_7": "description number 7",
+            "label_8": "description number 8",
+            "label_9": "description number 9",
+            "label_10": "description number 10",
+            "label_11": "description number 11"
+          }
+        }
+      },
+      "answers": {
+        "category": {
+          "type": "choice",
+          "confidence": 0.9458,
+          "answer_confidence": 0.9784,
+          "action": {
+            "act_probability": 1.0
+          },
+          "choice": "label_0",
+          "probabilities": {
+            "label_0": 0.9784,
+            "label_1": 0.0134,
+            "label_2": 0.0027,
+            "label_3": 0.0008,
+            "label_4": 0.0003,
+            "label_5": 0.0002,
+            "label_6": 0.0014,
+            "label_7": 0.0014,
+            "label_8": 0.0009,
+            "label_9": 0.0002,
+            "label_10": 0.0002,
+            "label_11": 0.0002
+          }
+        }
+      }
+    },
+    {
+      "label": "structured state and criteria",
+      "state": {
+        "from": "hello@world",
+        "subject": "charge on invoice",
+        "body": "We were billed twice in March. Please refund the duplicate today."
+      },
+      "questions": {
+        "phish": {
+          "type": "noul",
+          "instructions": "Is this message a scam?",
+          "criteria": {
+            "true": {
+              "desc": "scam"
+            },
+            "false": "legitimate"
+          },
+          "labels": {
+            "true": "yes",
+            "false": "no"
+          }
+        },
+        "tone": {
+          "type": "score",
+          "instructions": "How does this read?",
+          "criteria": ["calm", "annoyed", "furious", "threatening", "legal action"]
+        }
+      },
+      "answers": {
+        "phish": {
+          "type": "noul",
+          "confidence": 0.766,
+          "answer_confidence": 0.766,
+          "action": {
+            "act_probability": 1.0
+          },
+          "noul": 0.766
+        },
+        "tone": {
+          "type": "score",
+          "confidence": 0.5222,
+          "answer_confidence": 0.7862,
+          "action": {
+            "act_probability": 1.0
+          },
+          "score": 1.1034,
+          "legend": {
+            "0": "calm",
+            "1": "annoyed",
+            "2": "furious",
+            "3": "threatening",
+            "4": "legal action"
+          },
+          "probabilities": {
+            "0": 0.083,
+            "1": 0.7862,
+            "2": 0.0911,
+            "3": 0.024,
+            "4": 0.0157
+          }
+        }
+      }
+    }
+  ]
+}

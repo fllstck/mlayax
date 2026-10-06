@@ -1,0 +1,443 @@
+{
+  "generator": "tools/reference/make_prepare_fixture.py",
+  "reference": "laya_mlx",
+  "tokenizer": "test/fixtures/tiny/tokenizer",
+  "max_len": 64,
+  "head_max_len": 32,
+  "cases": [
+    {
+      "label": "three questions",
+      "state": "I was billed twice. Please refund the duplicate today.",
+      "questions": {
+        "department": {
+          "type": "choice",
+          "instructions": "Which team should handle this request?",
+          "criteria": {
+            "billing": "invoices, payments, refunds",
+            "technical": "bugs and outages",
+            "sales": "new purchases"
+          }
+        },
+        "urgency": {
+          "type": "score",
+          "instructions": "How urgent is this request?",
+          "criteria": ["not urgent", "soon", "critical"]
+        },
+        "refund": {
+          "type": "noul",
+          "instructions": "Does the customer ask for money back?"
+        }
+      },
+      "items": {
+        "department": {
+          "qtype": 0,
+          "ids": [
+            2, 16, 15, 79, 1, 34, 1, 1, 1, 1, 80, 3, 4, 22, 79, 1, 82, 4, 23, 79, 1, 48, 4, 24, 79,
+            1, 1, 3, 1, 1, 1, 9, 81, 1, 7, 12, 71, 73, 81, 3
+          ],
+          "markers": [12, 17, 22],
+          "options": {
+            "options": 3,
+            "options_distinct": 3,
+            "tokens_per_option": 5
+          },
+          "state_stats": {
+            "state_tokens": 11,
+            "state_tokens_used": 11,
+            "state_tokens_dropped": 0,
+            "truncated": false
+          },
+          "rendered_options": [
+            "billing: invoices, payments, refunds",
+            "technical: bugs and outages",
+            "sales: new purchases"
+          ]
+        },
+        "urgency": {
+          "qtype": 1,
+          "ids": [
+            2, 17, 15, 79, 1, 36, 13, 1, 1, 80, 3, 4, 21, 88, 79, 30, 36, 4, 21, 89, 79, 1, 4, 21,
+            90, 79, 1, 3, 1, 1, 1, 9, 81, 1, 7, 12, 71, 73, 81, 3
+          ],
+          "markers": [11, 17, 22],
+          "options": {
+            "options": 3,
+            "options_distinct": 3,
+            "tokens_per_option": null
+          },
+          "state_stats": {
+            "state_tokens": 11,
+            "state_tokens_used": 11,
+            "state_tokens_dropped": 0,
+            "truncated": false
+          },
+          "rendered_options": ["level 0: not urgent", "level 1: soon", "level 2: critical"]
+        },
+        "refund": {
+          "qtype": 2,
+          "ids": [
+            2, 18, 15, 79, 1, 12, 1, 1, 51, 37, 38, 80, 3, 4, 26, 79, 20, 82, 12, 28, 29, 4, 27, 79,
+            19, 82, 12, 28, 32, 3, 1, 1, 1, 9, 81, 1, 7, 12, 71, 73, 81, 3
+          ],
+          "markers": [13, 21],
+          "options": {
+            "options": 2,
+            "options_distinct": 2,
+            "tokens_per_option": 8
+          },
+          "state_stats": {
+            "state_tokens": 11,
+            "state_tokens_used": 11,
+            "state_tokens_dropped": 0,
+            "truncated": false
+          },
+          "rendered_options": [
+            "false: no, the statement does not hold",
+            "true: yes, the statement holds"
+          ]
+        }
+      }
+    },
+    {
+      "label": "12 options (clamped 11+ bucket)",
+      "state": "The widget arrived scratched and the manual is missing.",
+      "questions": {
+        "category": {
+          "type": "choice",
+          "instructions": "Which category fits best?",
+          "criteria": {
+            "label_0": "description number 0",
+            "label_1": "description number 1",
+            "label_2": "description number 2",
+            "label_3": "description number 3",
+            "label_4": "description number 4",
+            "label_5": "description number 5",
+            "label_6": "description number 6",
+            "label_7": "description number 7",
+            "label_8": "description number 8",
+            "label_9": "description number 9",
+            "label_10": "description number 10",
+            "label_11": "description number 11"
+          }
+        }
+      },
+      "items": {
+        "category": {
+          "qtype": 0,
+          "ids": [
+            2, 16, 15, 79, 1, 1, 1, 1, 80, 3, 4, 1, 79, 61, 4, 1, 79, 61, 4, 1, 79, 61, 4, 1, 79,
+            61, 4, 1, 79, 61, 4, 1, 79, 61, 4, 1, 79, 61, 4, 1, 79, 61, 4, 1, 79, 61, 4, 1, 79, 61,
+            4, 1, 79, 61, 4, 1, 79, 61, 3, 1, 1, 1, 1, 3
+          ],
+          "markers": [10, 14, 18, 22, 26, 30, 34, 38, 42, 46, 50, 54],
+          "options": {
+            "options": 12,
+            "options_distinct": 1,
+            "tokens_per_option": 4
+          },
+          "state_stats": {
+            "state_tokens": 10,
+            "state_tokens_used": 4,
+            "state_tokens_dropped": 6,
+            "truncated": true
+          },
+          "rendered_options": [
+            "label_0: description number 0",
+            "label_1: description number 1",
+            "label_2: description number 2",
+            "label_3: description number 3",
+            "label_4: description number 4",
+            "label_5: description number 5",
+            "label_6: description number 6",
+            "label_7: description number 7",
+            "label_8: description number 8",
+            "label_9: description number 9",
+            "label_10: description number 10",
+            "label_11: description number 11"
+          ]
+        }
+      }
+    },
+    {
+      "label": "structured state and criteria",
+      "state": {
+        "from": "hello@world",
+        "subject": "charge on invoice",
+        "body": "We were billed twice in March. Please refund the duplicate today."
+      },
+      "questions": {
+        "phish": {
+          "type": "noul",
+          "instructions": "Is this message a scam?",
+          "criteria": {
+            "true": {
+              "desc": "scam"
+            },
+            "false": "legitimate"
+          },
+          "labels": {
+            "true": "yes",
+            "false": "no"
+          }
+        },
+        "tone": {
+          "type": "score",
+          "instructions": "How does this read?",
+          "criteria": ["calm", "annoyed", "furious", "threatening", "legal action"]
+        }
+      },
+      "items": {
+        "phish": {
+          "qtype": 2,
+          "ids": [
+            2, 18, 15, 79, 1, 1, 42, 14, 55, 80, 3, 4, 20, 79, 56, 4, 19, 79, 1, 53, 1, 85, 55, 1,
+            3, 1, 43, 1, 85, 5, 1, 6, 1, 85, 44, 1, 85, 72, 1, 11, 1, 85, 41, 1, 85, 1, 50, 1, 9,
+            47, 1, 81, 1, 7, 12, 71, 73, 1, 3
+          ],
+          "markers": [11, 15],
+          "options": {
+            "options": 2,
+            "options_distinct": 2,
+            "tokens_per_option": null
+          },
+          "state_stats": {
+            "state_tokens": 33,
+            "state_tokens_used": 33,
+            "state_tokens_dropped": 0,
+            "truncated": false
+          },
+          "rendered_options": ["no: legitimate", "yes: {\"desc\": \"scam\"}"]
+        },
+        "tone": {
+          "qtype": 1,
+          "ids": [
+            2, 17, 15, 79, 1, 29, 1, 1, 80, 3, 4, 21, 88, 79, 4, 21, 89, 79, 4, 21, 90, 79, 4, 21,
+            91, 79, 4, 21, 1, 79, 3, 1, 43, 1, 85, 5, 1, 6, 1, 85, 44, 1, 85, 72, 1, 11, 1, 85, 41,
+            1, 85, 1, 50, 1, 9, 47, 1, 81, 1, 7, 12, 71, 73, 3
+          ],
+          "markers": [10, 14, 18, 22, 26],
+          "options": {
+            "options": 5,
+            "options_distinct": 5,
+            "tokens_per_option": 4
+          },
+          "state_stats": {
+            "state_tokens": 33,
+            "state_tokens_used": 32,
+            "state_tokens_dropped": 1,
+            "truncated": true
+          },
+          "rendered_options": [
+            "level 0: calm",
+            "level 1: annoyed",
+            "level 2: furious",
+            "level 3: threatening",
+            "level 4: legal action"
+          ]
+        }
+      }
+    },
+    {
+      "label": "list criteria render as bare labels",
+      "state": "cancel my plan",
+      "questions": {
+        "kind": {
+          "type": "choice",
+          "instructions": "Which one?",
+          "criteria": ["alpha", "beta", "gamma"]
+        },
+        "mixed": {
+          "type": "choice",
+          "instructions": "Which one?",
+          "criteria": {
+            "one": null,
+            "two": "",
+            "three": 0,
+            "four": false
+          }
+        }
+      },
+      "items": {
+        "kind": {
+          "qtype": 0,
+          "ids": [2, 16, 15, 79, 1, 57, 80, 3, 4, 63, 4, 64, 4, 65, 3, 74, 1, 75, 3],
+          "markers": [8, 10, 12],
+          "options": {
+            "options": 3,
+            "options_distinct": 3,
+            "tokens_per_option": null
+          },
+          "state_stats": {
+            "state_tokens": 3,
+            "state_tokens_used": 3,
+            "state_tokens_dropped": 0,
+            "truncated": false
+          },
+          "rendered_options": ["alpha", "beta", "gamma"]
+        },
+        "mixed": {
+          "qtype": 0,
+          "ids": [
+            2, 16, 15, 79, 1, 57, 80, 3, 4, 57, 4, 1, 4, 1, 79, 88, 4, 1, 79, 26, 3, 74, 1, 75, 3
+          ],
+          "markers": [8, 10, 12, 16],
+          "options": {
+            "options": 4,
+            "options_distinct": 4,
+            "tokens_per_option": null
+          },
+          "state_stats": {
+            "state_tokens": 3,
+            "state_tokens_used": 3,
+            "state_tokens_dropped": 0,
+            "truncated": false
+          },
+          "rendered_options": ["one", "two", "three: 0", "four: false"]
+        }
+      }
+    },
+    {
+      "label": "state truncation (right)",
+      "state": "We were billed twice. Please refund the duplicate today. The account is locked. The invoice is a duplicate charge. Please unlock the account and cancel the duplicate charge. We were billed twice again. The plan is not the one we asked for. Please refund the duplicate charge on the invoice today.",
+      "questions": {
+        "department": {
+          "type": "choice",
+          "instructions": "Which team should handle this request?",
+          "criteria": {
+            "billing": null,
+            "technical": null,
+            "sales": null
+          }
+        }
+      },
+      "items": {
+        "department": {
+          "qtype": 0,
+          "ids": [
+            2, 16, 15, 79, 1, 34, 1, 1, 1, 1, 80, 3, 4, 22, 4, 23, 4, 24, 3, 1, 50, 1, 9, 81, 1, 7,
+            12, 71, 73, 81, 1, 76, 13, 77, 81, 1, 11, 13, 14, 71, 72, 81, 1, 78, 12, 76, 48, 74, 12,
+            71, 72, 81, 1, 50, 1, 9, 1, 81, 1, 75, 13, 30, 12, 3
+          ],
+          "markers": [12, 14, 16],
+          "options": {
+            "options": 3,
+            "options_distinct": 3,
+            "tokens_per_option": null
+          },
+          "state_stats": {
+            "state_tokens": 59,
+            "state_tokens_used": 44,
+            "state_tokens_dropped": 15,
+            "truncated": true
+          },
+          "rendered_options": ["billing", "technical", "sales"]
+        }
+      }
+    },
+    {
+      "label": "turn list truncation (left)",
+      "state": [
+        "hello",
+        "world",
+        "we were billed twice",
+        "please refund the duplicate",
+        "the account is locked",
+        "the invoice is a duplicate charge",
+        "please unlock the account",
+        "and cancel the duplicate charge today"
+      ],
+      "questions": {
+        "refund": {
+          "type": "noul",
+          "instructions": "Does the customer ask for money back?"
+        }
+      },
+      "items": {
+        "refund": {
+          "qtype": 2,
+          "ids": [
+            2, 18, 15, 79, 1, 12, 1, 1, 51, 37, 38, 80, 3, 4, 26, 79, 20, 82, 12, 28, 29, 4, 27, 79,
+            19, 82, 12, 28, 32, 3, 10, 7, 12, 71, 1, 85, 12, 76, 13, 77, 1, 85, 12, 11, 13, 14, 71,
+            72, 1, 85, 10, 78, 12, 76, 1, 85, 48, 74, 12, 71, 72, 73, 1, 3
+          ],
+          "markers": [13, 21],
+          "options": {
+            "options": 2,
+            "options_distinct": 2,
+            "tokens_per_option": 8
+          },
+          "state_stats": {
+            "state_tokens": 46,
+            "state_tokens_used": 33,
+            "state_tokens_dropped": 13,
+            "truncated": true
+          },
+          "rendered_options": [
+            "false: no, the statement does not hold",
+            "true: yes, the statement holds"
+          ]
+        }
+      }
+    },
+    {
+      "label": "options collapse under a tight head budget",
+      "state": "the body is locked",
+      "questions": {
+        "category": {
+          "type": "choice",
+          "instructions": "Which category fits best?",
+          "criteria": {
+            "alpha": "one two three four five six seven",
+            "beta": "one two three four five six eight",
+            "gamma": "one two three four five six nine",
+            "delta": "one two three four five seven ten",
+            "mid": "one two three four five six eleven",
+            "other": "one two three four five six twelve",
+            "billing": "one two three four five six thirteen",
+            "technical": "one two three four five six fourteen",
+            "sales": "one two three four five six fifteen",
+            "locked": "one two three four five six sixteen",
+            "unlock": "one two three four five six seventeen",
+            "refund": "one two three four five six eighteen"
+          }
+        }
+      },
+      "items": {
+        "category": {
+          "qtype": 0,
+          "ids": [
+            2, 16, 15, 79, 1, 1, 1, 1, 80, 3, 4, 63, 79, 57, 4, 64, 79, 57, 4, 65, 79, 57, 4, 66,
+            79, 57, 4, 67, 79, 57, 4, 25, 79, 57, 4, 22, 79, 57, 4, 23, 79, 57, 4, 24, 79, 57, 4,
+            77, 79, 57, 4, 78, 79, 57, 4, 7, 79, 57, 3, 12, 41, 13, 77, 3
+          ],
+          "markers": [10, 14, 18, 22, 26, 30, 34, 38, 42, 46, 50, 54],
+          "options": {
+            "options": 12,
+            "options_distinct": 12,
+            "tokens_per_option": 4
+          },
+          "state_stats": {
+            "state_tokens": 4,
+            "state_tokens_used": 4,
+            "state_tokens_dropped": 0,
+            "truncated": false
+          },
+          "rendered_options": [
+            "alpha: one two three four five six seven",
+            "beta: one two three four five six eight",
+            "gamma: one two three four five six nine",
+            "delta: one two three four five seven ten",
+            "mid: one two three four five six eleven",
+            "other: one two three four five six twelve",
+            "billing: one two three four five six thirteen",
+            "technical: one two three four five six fourteen",
+            "sales: one two three four five six fifteen",
+            "locked: one two three four five six sixteen",
+            "unlock: one two three four five six seventeen",
+            "refund: one two three four five six eighteen"
+          ]
+        }
+      }
+    }
+  ]
+}
