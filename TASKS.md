@@ -13,7 +13,7 @@ with no Python, no pyproject, no subprocess. Two packages, published manually:
 
 | package | contents | size target |
 |---|---|---|
-| `@fllstck/mlayax` | TypeScript/JS only: prompt construction, calibration, answer shaping, MLX runtime layer (vendored JS), request batching, HTTP service | < 300 KB |
+| `@fllstck/mlayax` | TypeScript/JS only: prompt construction, calibration, answer shaping, MLX runtime layer (vendored JS), Hugging Face fetcher | < 300 KB |
 | `@fllstck/mlayax-darwin-arm64` | native payload: `node_mlx.node` + `libmlx.dylib` + `libjaccl.dylib` + `mlx.metallib` + `SHA256SUMS` + `VERSION` | ≈ 64 MiB gzipped (metallib is 181 MiB raw) |
 
 ### The decision this follows (already argued; do not relitigate)
@@ -53,8 +53,8 @@ Everything below already works and is measured. Location:
 | `src/tokenizer.ts` | 44 | `@huggingface/tokenizers` wrapper (special tokens + `encode`) | `src/core/` |
 | `src/mlx/model.ts` | 455 | ModernBERT + decision head, MLX ops, pre-split weights, masks | `src/mlx/model.ts` |
 | `src/mlx/agent.ts` | 386 | load, cast, collate, compiled forward, readout, mask cache | `src/mlx/agent.ts` |
-| `src/mlx/batcher.ts` | 197 | request batching (window, maxRows, asyncEval, stats) | `src/service/batcher.ts` |
-| `src/mlx/server.ts` | 98 | HTTP service (`POST /predict`, `/metrics`, `/health`) | `src/service/server.ts` |
+| ~~`src/mlx/batcher.ts`~~ | 197 | request batching across concurrent calls (window, maxRows, stats) | *not ported — see phase 4* |
+| ~~`src/mlx/server.ts`~~ | 98 | HTTP service (`POST /predict`, `/metrics`, `/health`) | *not ported — see phase 4* |
 | `src/compare.ts` | 59 | parity scorecard used by tests | `test/helpers/` |
 
 Supporting material to copy as-is:
@@ -96,7 +96,7 @@ Reference performance on that machine (fp16, English checkpoint, 39-token state)
 | three questions | 15.4 ms |
 | 16-row batch | 59.1 ms (271 q/s) |
 | throughput plateau | ~312 q/s at ≥8 rows |
-| request batching gain (service, concurrency 32, short states) | 2.5x |
+| request batching gain (service, concurrency 32, short states) | 2.5x — **not applicable**, we ship no service |
 | fp32 parity vs Python `laya_mlx` | **bit-exact** (61/61 fields) |
 | fp16 parity | Δ ≤ 4e-4 (48/61 exact) |
 | RSS, one model resident | ~0.95–1.0 GiB |
@@ -117,8 +117,7 @@ Reference performance on that machine (fp16, English checkpoint, 39-token state)
 │   ├── mlayax/                  # @fllstck/mlayax — the published façade
 │   │   ├── src/core/            # pure TS: no native, unit-testable anywhere
 │   │   ├── src/mlx/             # MLX runtime (vendored binding JS + model/agent)
-│   │   ├── src/service/         # batcher + HTTP server
-│   │   ├── src/hub.ts           # Hugging Face download/cache (new work, see 5.2)
+│   │   ├── src/hub.ts           # Hugging Face download/cache (see 3b)
 │   │   └── vendor/node-mlx/     # vendored MIT JS layer (+ its LICENSE)
 │   └── mlayax-darwin-arm64/     # @fllstck/mlayax-darwin-arm64 — native payload only
 │       ├── lib/{node_mlx.node,libmlx.dylib,libjaccl.dylib,mlx.metallib}
@@ -130,8 +129,8 @@ Reference performance on that machine (fp16, English checkpoint, 39-token state)
 └── bench/{batchscale.ts,servebench.ts,varibench.ts,baseline.json}
 ```
 
-**Two published packages, not four.** `core` and `service` stay internal source folders inside
-`@fllstck/mlayax`; testing them does not require publishing them. Keep lockstep versions at `0.1.0`
+**Two published packages, not four.** `core` stays an internal source folder inside
+`@fllstck/mlayax`; testing it does not require publishing it. Keep lockstep versions at `0.1.0`
 and an exact pin in `optionalDependencies`.
 
 ---
@@ -307,8 +306,9 @@ here with a described problem instead of producing a slightly different prompt.
       - `mx.compile(fn, /*shapeless*/ false)` is the **default** (12 % win, one trace per shape);
         `shapeless: true` requires manual fp32-accumulating attention and costs 12–15 % — keep it as an
         opt-in (`MLAYAX_SHAPELESS=1`), documented;
-      - `mx.tidy` default on for the sync path, **off** on the async service path (dispose feeds
-        explicitly).
+      - `mx.tidy` default on for the synchronous path, **off** when the caller evaluates
+        asynchronously (`mx.tidy` around an in-flight `mx.asyncEval` is unsafe), disposing feeds
+        explicitly instead.
       Also added a typed `MxCore`/`MlxArray` surface (`src/mlx/types.ts`) instead of threading the
       addon as `any`: a misspelled op or a wrong `axis` was previously a runtime failure on the one
       code path that needs a GPU. Request-level `usage` (`input_tokens`, `state_tokens`,
@@ -418,18 +418,32 @@ would make every consumer async for the benefit of one first run. A cached snaps
 a branch name — that is what `refs/<revision>` is for — with `force: true` to re-check upstream.
 
 **Budget watch:** the façade is now **282.0 KiB of its 300 KB budget** (65 files). Source maps are
-roughly half of that and are the first thing to drop if Phase 4's service layer pushes it over; the
+roughly half of that and are the first thing to drop if later work pushes it over; the
 size gate will say so rather than letting the publish fail.
 
-### Phase 4 — Service layer
+### Phase 4 — Service layer — **DROPPED 2026-10-06 (decided, not deferred)**
 
-- [ ] Move `batcher.ts` and `server.ts`; keep `asyncEval`, window, `maxRows`, `maxQueueRows`, stats.
-- [ ] Fix the batching semantics documented in `docs/PORTING.md`: rows are independent, padding is
-      masked, batched answers must equal solo answers (assert it).
-- [ ] Server: `POST /predict` (state + questions), `GET /metrics`, `GET /health`, `GET /ready`
-      (model resident), graceful shutdown (`SIGINT`/`SIGTERM` → drain queue, then exit).
-- [ ] Acceptance: burst of 8 concurrent requests collapses into one forward (`meanRowsPerForward`
-      visible in `/metrics`), and `batched == solo` holds.
+The HTTP server and the cross-request batcher are **out of scope**. This is a programmatic library
+that people import from TypeScript, not a service. No `src/service/`, no `batcher.ts`, no
+`POST /predict`, no `/metrics`, no graceful-shutdown machinery, and no subpath exports for any of it.
+
+**What that costs, stated honestly.** `src/mlx/batcher.ts` coalesced *concurrent* requests into one
+forward, worth 2.5x on short states at concurrency 32. Nothing replaces that: a library cannot see
+its caller's concurrency. What is already in place covers the shape that most library callers have:
+`predict(state, questions)` forwards every question of one request **in a single batch** (chunked at
+`batchSize`), so a 12-question rubric is one forward rather than twelve. Callers who want more can
+compose the primitives directly — `prepare()` → `forwardItems()` → `shapeItems()` are all public, so
+N independent requests can be collated into one forward by hand, with `maskInputs()` available for
+the masks. That is the seam the batcher used, exposed rather than wrapped.
+
+**Consequences elsewhere, all applied:** the façade's advertised contents, the repository layout, the
+`src/service` row in the §1 source-material table, the 2.5x row in §2, the §6/§7 gates that asserted
+service behaviour, hazard §8.9's wording, and the README quickstart in Phase 8. §7's requirement that
+`batched == solo` is kept, because that is about correctness of chunking inside one request.
+
+If a service is ever wanted, `batcher.ts` and `server.ts` are still in the spike and this section is
+the specification for them: rows are independent, padding is masked, and the acceptance test is a
+burst of 8 collapsing into one forward with `batched == solo`.
 
 ### Phase 5 — Native package `@fllstck/mlayax-darwin-arm64`
 
@@ -464,7 +478,7 @@ size gate will say so rather than letting the publish fail.
       fp32 bit-exact, fp16 within tolerance.
 - [ ] **Parity (real checkpoint, opt-in)**: `MLAYAX_MODEL_DIR=… vitest run -t parity` against
       `test/fixtures/ref/{fp16,fp32}.json`; gate fp32 **bit-exact**, fp16 Δ ≤ 4e-4.
-- [ ] **Integration**: batching equals solo; service endpoints; offline/cached loads; JSON-schema
+- [ ] **Integration**: batching equals solo; offline/cached loads; JSON-schema
       shape of the answer payload (and `answer_confidence` present — upstream emits it; `@johnhenry`
       omits it).
 - [ ] **Bench gates** (`npm run bench:check`, macOS only, opt-in): p50 within 1.3x of
@@ -490,8 +504,9 @@ size gate will say so rather than letting the publish fail.
 
 ### Phase 8 — Docs and licensing
 
-- [ ] `README.md`: what it is (independent port; Convai's weights), install, quickstart (predict +
-      service), API reference (options table mirroring `load()`/`predict()`), compatibility
+- [ ] `README.md`: what it is (independent port; Convai's weights), install, quickstart (prompt
+      construction and `predict()`, with a real request and the answer shape), API reference (options
+      table mirroring `load()`/`loadAsync()`/`predict()`), compatibility
       (arm64-only, macOS ≥ 14, Node ≥ 22, Bun ≥ 1.2, MLX version pinned), performance table (§2),
       the "don't mix MLX builds in one process" caveat, first-run download size, and the licence of
       the weights (Apache-2.0, Convai Innovations).
@@ -518,7 +533,7 @@ Pre-flight (all must be green):
 - [ ] `npm pack --dry-run --workspace @fllstck/mlayax-darwin-arm64` → confirm files + size
       (< ~120 MiB compressed; note npm rejects around 200 MB with HTTP 413).
 - [ ] Clean-room install test: in a scratch dir, `npm i <tarball-dir>` and
-      `bun add <tarball-dir>`, then run a real prediction and the HTTP service.
+      `bun add <tarball-dir>`, then run a real prediction from TypeScript under both runtimes.
 
 Publish (manual, in this order — platform package first):
 
@@ -570,9 +585,15 @@ Post-publish:
 
 - [ ] `npm i @fllstck/mlayax` then `predict()` works on a clean machine (Node ≥ 22 and Bun ≥ 1.2),
       with the checkpoint downloaded once and cached.
+- [ ] The public surface is usable from TypeScript without escape hatches: `load`/`loadAsync`/
+      `predict` and the answer types type-check under `strict` + `noUncheckedIndexedAccess`, and no
+      exported signature returns `any`. It is a library, so its API is the product.
+- [ ] No service, no HTTP, no subpath export that implies one. `import { load } from
+      "@fllstck/mlayax"` is the whole story, and importing it must not load native code.
 - [ ] fp32 parity with Python `laya_mlx` is **bit-exact** on the real checkpoint; fp16 within 4e-4.
 - [ ] Bench is within 1.3x of the §2 reference numbers on comparable hardware.
-- [ ] The service batches concurrent requests (≥ 2x throughput on short states) and `batched == solo`.
+- [ ] `batched == solo` holds: the questions of one request answer identically whether forwarded
+      together or one per forward.
 - [ ] No absolute paths, no venv references, no install scripts, no weights in any tarball.
 - [ ] Licences/notices present in both packages; README states the arm64/macOS/MLX constraints.
 - [ ] `CHANGELOG.md`, `docs/PORTING.md`, `docs/ECOSYSTEM.md` published; patch offer sent upstream.
@@ -598,8 +619,8 @@ Post-publish:
 8. **Prompt rendering regressions**: `labels` ignored for `noul` (the `@johnhenry` bug), labels
    rendered as `label: null` (our bug), Python JSON separators. Test: exact rendered strings **and**
    token ids from the frozen fixture tokenizer.
-9. **`mx.tidy` around `mx.asyncEval`** is unsafe; the service path must dispose feeds explicitly.
-   Test: repeated service batches under load, assert no crash and stable RSS.
+9. **`mx.tidy` around `mx.asyncEval`** is unsafe; the asynchronous path must dispose its feeds
+   explicitly. Test: repeated async forwards, assert no crash and stable RSS.
 10. **Rounding**: Python `round` is banker's; answer fields are 4-decimal. Test: tie values.
 
 ---
@@ -629,12 +650,17 @@ Every recommendation above is accepted. The reasons in one place, so they are no
   measured through it. A ~300-line slim wrapper over the patched `.node` is the follow-up that
   shrinks the surface. `vendor/` is excluded from Biome and from TypeScript so it stays untouched
   until then.
-- **Packaging → (a) two packages** (façade + platform). Fewer manual publishes, and `core`/`service`
-  are internal source folders anyway, so they need no publish step to be tested.
+- **Packaging → (a) two packages** (façade + platform). Fewer manual publishes, and `core` stays
+  an internal source folder — testing it needs no publish step.
 - **`compile` → specialized by default,** shapeless behind `MLAYAX_SHAPELESS=1`. Retraces are one-off
-  and amortise in a service; the 12–15 % shapeless tax is paid on every request.
+  and amortise in a long-lived process; the 12–15 % shapeless tax is paid on every call.
 - **Weights → download at first use.** ~803 MiB and Apache-2.0; never bundled, in either tarball.
   `.gitignore` already excludes `models/` and the HF cache.
+- **Scope → a programmatic library only; the service layer is dropped (2026-10-06).** No HTTP server,
+  no cross-request batcher, no `/metrics`. Rationale and the cost of the decision are in phase 4; the
+  short version is that this is imported from TypeScript, and a library cannot see its caller's
+  concurrency. The seam the batcher used (`prepare` → `forwardItems` → `shapeItems`) is public, so a
+  caller who needs coalescing can build it without us shipping a server.
 
 Deliberately left open, because Phase 5 has to measure it: whether `node_mlx.node` should statically
 link `libmlx` or keep the `@loader_path`-relative dynamic link. The only hard requirement is that the
