@@ -1,0 +1,552 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 2cb0999..93ab4e5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -27,16 +27,48 @@ if(MSVC AND CMAKE_JS_NODELIB_DEF AND CMAKE_JS_NODELIB_TARGET)
+   target_link_libraries(${PROJECT_NAME} delayimp)
+ endif()
+ 
++# Link with MLX.
++#
++# Upstream node-mlx builds its vendored MLX from source, which requires the full Xcode Metal
++# toolchain. On a machine that only has CommandLineTools there is no `metal` compiler, so point
++# MLX_PREFIX at a prebuilt MLX instead (e.g. `brew install mlx`, which ships headers,
++# libmlx.dylib and mlx.metallib for the matching version).
++set(MLX_PREFIX "$ENV{MLX_PREFIX}" CACHE PATH "Prefix of a prebuilt MLX installation")
++if(NOT MLX_PREFIX)
++  execute_process(COMMAND brew --prefix mlx
++                  OUTPUT_VARIABLE MLX_PREFIX
++                  OUTPUT_STRIP_TRAILING_WHITESPACE
++                  ERROR_QUIET)
++endif()
++set(MLX_USE_PREBUILT FALSE)
++if(MLX_PREFIX AND EXISTS "${MLX_PREFIX}/lib/libmlx.dylib")
++  set(MLX_USE_PREBUILT TRUE)
++endif()
++
+ # Add source files.
++# src/fft.cc is built against MLX >= 0.26 through the adapters in that file.
++option(MLX_SKIP_FFT "Skip src/fft.cc" OFF)
+ file(GLOB SOURCE_FILES "src/*")
++if(MLX_SKIP_FFT)
++  list(FILTER SOURCE_FILES EXCLUDE REGEX "src/fft\\.cc$")
++endif()
+ target_sources(${PROJECT_NAME} PRIVATE ${SOURCE_FILES})
+ 
+ # Use kizunapi.
+ target_include_directories(${PROJECT_NAME} PRIVATE "deps/kizunapi")
+ 
+-# Link with MLX.
+-option(MLX_BUILD_TESTS "Build tests for mlx" OFF)
+-option(MLX_BUILD_EXAMPLES "Build examples for mlx" OFF)
+-option(MLX_ENABLE_X64_MAC "Enable building for x64 macOS" ON)
+-add_subdirectory(deps/mlx)
+-target_link_libraries(${PROJECT_NAME} mlx)
++if(MLX_USE_PREBUILT)
++  message(STATUS "Using prebuilt MLX at ${MLX_PREFIX}")
++  target_compile_definitions(${PROJECT_NAME} PRIVATE MLX_GE_026)
++  target_include_directories(${PROJECT_NAME} PRIVATE "${MLX_PREFIX}/include")
++  target_link_libraries(${PROJECT_NAME} "${MLX_PREFIX}/lib/libmlx.dylib")
++  set_target_properties(${PROJECT_NAME} PROPERTIES
++                        BUILD_RPATH "${MLX_PREFIX}/lib"
++                        INSTALL_RPATH "${MLX_PREFIX}/lib")
++else()
++  option(MLX_BUILD_TESTS "Build tests for mlx" OFF)
++  option(MLX_BUILD_EXAMPLES "Build examples for mlx" OFF)
++  option(MLX_ENABLE_X64_MAC "Enable building for x64 macOS" ON)
++  add_subdirectory(deps/mlx)
++  target_link_libraries(${PROJECT_NAME} mlx)
++endif()
+\ No newline at end of file
+diff --git a/src/fast.cc b/src/fast.cc
+index 6cfe1e0..53a4e3a 100644
+--- a/src/fast.cc
++++ b/src/fast.cc
+@@ -42,16 +42,16 @@ mx::array ScaledDotProductAttention(
+         throw std::invalid_argument(msg.str());
+       }
+       return mx::fast::scaled_dot_product_attention(
+-          queries, keys, values, scale, mask_str, {}, s);
++          queries, keys, values, scale, mask_str, {}, {}, false, s);
+     } else {
+       auto mask_arr = std::get<mx::array>(mask);
+       return mx::fast::scaled_dot_product_attention(
+-          queries, keys, values, scale, "", {mask_arr}, s);
++          queries, keys, values, scale, "", {mask_arr}, {}, false, s);
+     }
+ 
+   } else {
+     return mx::fast::scaled_dot_product_attention(
+-        queries, keys, values, scale, "", {}, s);
++        queries, keys, values, scale, "", {}, {}, false, s);
+   }
+ }
+ 
+diff --git a/src/fft.cc b/src/fft.cc
+index 808889a..66af8de 100644
+--- a/src/fft.cc
++++ b/src/fft.cc
+@@ -1,6 +1,46 @@
+ #include "src/array.h"
+ #include "src/stream.h"
+ 
++// MLX 0.26 added an FFTNorm argument and replaced std::vector<int> shapes with mx::Shape, so the
++// MLX fft functions can no longer be taken as the plain function pointers these wrappers expect.
++// The adapters below keep the previous signatures, using the default (backward) normalisation.
++namespace {
++
++#define NODE_MLX_FFT_1D(SHIM, FN)                                                  \
++  mx::array SHIM##_n(const mx::array& a, int n, int axis, mx::StreamOrDevice s) {   \
++    return mx::fft::FN(a, n, axis, mx::fft::FFTNorm::Backward, s);                  \
++  }                                                                                \
++  mx::array SHIM##_axis(const mx::array& a, int axis, mx::StreamOrDevice s) {       \
++    return mx::fft::FN(a, axis, mx::fft::FFTNorm::Backward, s);                     \
++  }
++
++NODE_MLX_FFT_1D(fft, fft)
++NODE_MLX_FFT_1D(ifft, ifft)
++NODE_MLX_FFT_1D(rfft, rfft)
++NODE_MLX_FFT_1D(irfft, irfft)
++
++#undef NODE_MLX_FFT_1D
++
++// FFTNOpWrapper calls mx::fft::fftn itself (upstream behaviour), so the pointers it receives only
++// have to satisfy its declared types. These are interchangeable with fftn.
++mx::array FFTSlotN(const mx::array& a,
++                   const std::vector<int>& n,
++                   const std::vector<int>& axes,
++                   mx::StreamOrDevice s) {
++  return mx::fft::fftn(a, mx::Shape(n.begin(), n.end()), axes,
++                       mx::fft::FFTNorm::Backward, s);
++}
++mx::array FFTSlotAxes(const mx::array& a,
++                      const std::vector<int>& axes,
++                      mx::StreamOrDevice s) {
++  return mx::fft::fftn(a, axes, mx::fft::FFTNorm::Backward, s);
++}
++mx::array FFTSlotNone(const mx::array& a, mx::StreamOrDevice s) {
++  return mx::fft::fftn(a, mx::fft::FFTNorm::Backward, s);
++}
++
++}  // namespace
++
+ // A template converter for ops that accept |n| and |axis|.
+ inline
+ std::function<mx::array(const mx::array& a,
+@@ -45,16 +85,17 @@ FFTNOpWrapper(const char* name,
+                                      std::optional<std::vector<int>> axes,
+                                      mx::StreamOrDevice s) {
+     if (n && axes) {
+-      return mx::fft::fftn(a, std::move(*n), std::move(*axes), s);
++      return mx::fft::fftn(a, mx::Shape(n->begin(), n->end()),
++                           std::move(*axes), mx::fft::FFTNorm::Backward, s);
+     } else if (axes) {
+-      return mx::fft::fftn(a, std::move(*axes), s);
++      return mx::fft::fftn(a, std::move(*axes), mx::fft::FFTNorm::Backward, s);
+     } else if (n) {
+       std::ostringstream msg;
+       msg << "[" << name << "] "
+           << "`axes` should not be `None` if `s` is not `None`.";
+       throw std::invalid_argument(msg.str());
+     } else {
+-      return mx::fft::fftn(a, s);
++      return mx::fft::fftn(a, mx::fft::FFTNorm::Backward, s);
+     }
+   };
+ }
+@@ -88,42 +129,40 @@ void InitFFT(napi_env env, napi_value exports) {
+   ki::Set(env, exports, "fft", fft);
+ 
+   ki::Set(env, fft,
+-          "fft", FFTOpWrapper(&mx::fft::fft,
+-                              &mx::fft::fft),
+-          "ifft", FFTOpWrapper(&mx::fft::ifft,
+-                               &mx::fft::ifft),
++          "fft", FFTOpWrapper(&fft_n, &fft_axis),
++          "ifft", FFTOpWrapper(&ifft_n, &ifft_axis),
+           "fft2", FFT2OpWrapper("fft2",
+-                                &mx::fft::fftn,
+-                                &mx::fft::fftn,
+-                                &mx::fft::fftn),
++                                &FFTSlotN,
++                                &FFTSlotAxes,
++                                &FFTSlotNone),
+           "ifft2", FFT2OpWrapper("ifft2",
+-                                 &mx::fft::ifftn,
+-                                 &mx::fft::ifftn,
+-                                 &mx::fft::ifftn),
++                                 &FFTSlotN,
++                                 &FFTSlotAxes,
++                                 &FFTSlotNone),
+           "fftn", FFTNOpWrapper("fftn",
+-                                &mx::fft::fftn,
+-                                &mx::fft::fftn,
+-                                &mx::fft::fftn),
++                                &FFTSlotN,
++                                &FFTSlotAxes,
++                                &FFTSlotNone),
+           "ifftn", FFTNOpWrapper("ifftn",
+-                                 &mx::fft::ifftn,
+-                                 &mx::fft::ifftn,
+-                                 &mx::fft::ifftn),
+-          "rfft", FFTOpWrapper(&mx::fft::rfft, &mx::fft::rfft),
+-          "irfft", FFTOpWrapper(&mx::fft::irfft, &mx::fft::irfft),
++                                 &FFTSlotN,
++                                 &FFTSlotAxes,
++                                 &FFTSlotNone),
++          "rfft", FFTOpWrapper(&rfft_n, &rfft_axis),
++          "irfft", FFTOpWrapper(&irfft_n, &irfft_axis),
+           "rfft2", FFT2OpWrapper("rfft2",
+-                                 &mx::fft::rfftn,
+-                                 &mx::fft::rfftn,
+-                                 &mx::fft::rfftn),
++                                 &FFTSlotN,
++                                 &FFTSlotAxes,
++                                 &FFTSlotNone),
+           "irfft2", FFT2OpWrapper("irfft2",
+-                                  &mx::fft::irfftn,
+-                                  &mx::fft::irfftn,
+-                                  &mx::fft::irfftn),
++                                  &FFTSlotN,
++                                  &FFTSlotAxes,
++                                  &FFTSlotNone),
+           "rfftn", FFTNOpWrapper("rfftn",
+-                                 &mx::fft::rfftn,
+-                                 &mx::fft::rfftn,
+-                                 &mx::fft::rfftn),
++                                 &FFTSlotN,
++                                 &FFTSlotAxes,
++                                 &FFTSlotNone),
+           "irfftn", FFTNOpWrapper("irfftn",
+-                                  &mx::fft::irfftn,
+-                                  &mx::fft::irfftn,
+-                                  &mx::fft::irfftn));
++                                  &FFTSlotN,
++                                  &FFTSlotAxes,
++                                  &FFTSlotNone));
+ }
+diff --git a/src/indexing.cc b/src/indexing.cc
+index e5d7286..6e03d9a 100644
+--- a/src/indexing.cc
++++ b/src/indexing.cc
+@@ -563,7 +563,9 @@ ScatterResult ScatterArgsNDimentional(const mx::array* a,
+                     a->shape().begin() + non_none_indices, a->shape().end());
+   up = mx::reshape(std::move(up), std::move(up_reshape));
+ 
+-  mx::Shape axes(arr_indices.size(), 0);
++  // ScatterResult's third element is a plain std::vector<int> of axes (MLX 0.32 keeps
++  // std::vector<int> for axes while shapes became SmallVector<int>).
++  std::vector<int> axes(arr_indices.size(), 0);
+   std::iota(axes.begin(), axes.end(), 0);
+   return {std::move(arr_indices), std::move(up), std::move(axes)};
+ }
+diff --git a/src/metal.cc b/src/metal.cc
+index 91f79ae..f273b3b 100644
+--- a/src/metal.cc
++++ b/src/metal.cc
+@@ -1,5 +1,16 @@
+ #include "src/bindings.h"
+ 
++namespace {
++
++// MLX 0.32 moved device_info to mlx::core::device_info(const Device& = default_device()).
++// A no-argument wrapper keeps the JavaScript API (mx.metal.deviceInfo()) unchanged, since
++// binding generators cannot express C++ default arguments.
++std::unordered_map<std::string, std::variant<std::string, size_t>> DeviceInfo() {
++  return mx::device_info();
++}
++
++}  // namespace
++
+ void InitMetal(napi_env env, napi_value exports) {
+   napi_value metal = ki::CreateObject(env);
+   ki::Set(env, exports, "metal", metal);
+@@ -8,5 +19,5 @@ void InitMetal(napi_env env, napi_value exports) {
+           "isAvailable", &mx::metal::is_available,
+           "startCapture", &mx::metal::start_capture,
+           "stopCapture", &mx::metal::stop_capture,
+-          "deviceInfo", &mx::metal::device_info);
++          "deviceInfo", &DeviceInfo);
+ }
+diff --git a/src/ops.cc b/src/ops.cc
+index aad9d05..a9a21e0 100644
+--- a/src/ops.cc
++++ b/src/ops.cc
+@@ -187,25 +187,25 @@ mx::array PutAlongAxis(const mx::array& a,
+                        a.shape(), s);
+ }
+ 
+-mx::array Full(std::variant<int, mx::Shape> shape,
++mx::array Full(std::variant<int, std::vector<int>> shape,
+                ScalarOrArray vals,
+                std::optional<mx::Dtype> dtype,
+                mx::StreamOrDevice s) {
+-  return mx::full(PutIntoVector(std::move(shape)),
++  return mx::full(ToShape(std::move(shape)),
+                   ToArray(std::move(vals), std::move(dtype)),
+                   s);
+ }
+ 
+-mx::array Zeros(std::variant<int, mx::Shape> shape,
++mx::array Zeros(std::variant<int, std::vector<int>> shape,
+                 std::optional<mx::Dtype> dtype,
+                 mx::StreamOrDevice s) {
+-  return mx::zeros(PutIntoVector(std::move(shape)), dtype.value_or(mx::float32), s);
++  return mx::zeros(ToShape(std::move(shape)), dtype.value_or(mx::float32), s);
+ }
+ 
+-mx::array Ones(std::variant<int, mx::Shape> shape,
++mx::array Ones(std::variant<int, std::vector<int>> shape,
+                std::optional<mx::Dtype> dtype,
+                mx::StreamOrDevice s) {
+-  return mx::ones(PutIntoVector(std::move(shape)), dtype.value_or(mx::float32), s);
++  return mx::ones(ToShape(std::move(shape)), dtype.value_or(mx::float32), s);
+ }
+ 
+ mx::array Eye(int n,
+@@ -303,8 +303,9 @@ std::vector<mx::array> Split(const mx::array& a,
+   if (auto i = std::get_if<int>(&indices); i) {
+     return mx::split(a, *i, axis.value_or(0), s);
+   } else {
+-    return mx::split(a, std::move(std::get<std::vector<int>>(indices)),
+-                     axis.value_or(0), s);
++    // mx::split takes a SmallVector<int> (mx::Shape) since MLX 0.26.
++    auto vec = std::get<std::vector<int>>(indices);
++    return mx::split(a, mx::Shape(vec.begin(), vec.end()), axis.value_or(0), s);
+   }
+ }
+ 
+@@ -544,7 +545,7 @@ mx::array ConvTranspose1d(
+     mx::StreamOrDevice s) {
+   return mx::conv_transpose1d(input, weight, stride.value_or(1),
+                               padding.value_or(0), dilation.value_or(1),
+-                              groups.value_or(1), s);
++                              0 /* output_padding */, groups.value_or(1), s);
+ }
+ 
+ mx::array ConvTranspose2d(
+@@ -574,7 +575,8 @@ mx::array ConvTranspose2d(
+     dilation_pair = std::move(*p);
+ 
+   return mx::conv_transpose2d(input, weight, stride_pair, padding_pair,
+-                              dilation_pair, groups.value_or(1), s);
++                              dilation_pair, std::pair<int, int>(0, 0) /* output_padding */,
++                              groups.value_or(1), s);
+ }
+ 
+ mx::array ConvTranspose3d(
+@@ -604,7 +606,9 @@ mx::array ConvTranspose3d(
+     dilation_tuple = std::move(*p);
+ 
+   return mx::conv_transpose3d(input, weight, stride_tuple, padding_tuple,
+-                              dilation_tuple, groups.value_or(1), s);
++                              dilation_tuple,
++                              std::tuple<int, int, int>(0, 0, 0) /* output_padding */,
++                              groups.value_or(1), s);
+ }
+ 
+ mx::array ConvGeneral(
+@@ -819,9 +823,11 @@ void InitOps(napi_env env, napi_value exports) {
+           "putAlongAxis", &ops::PutAlongAxis,
+           "full", &ops::Full,
+           "zeros", &ops::Zeros,
+-          "zerosLike", &mx::zeros_like,
++          "zerosLike", static_cast<mx::array (*)(const mx::array&, mx::StreamOrDevice)>(
++              &mx::zeros_like),
+           "ones", &ops::Ones,
+-          "onesLike", &mx::ones_like,
++          "onesLike", static_cast<mx::array (*)(const mx::array&, mx::StreamOrDevice)>(
++              &mx::ones_like),
+           "eye", &ops::Eye,
+           "identity", &ops::Identity,
+           "tri", &ops::Tri,
+@@ -832,9 +838,11 @@ void InitOps(napi_env env, napi_value exports) {
+           "any", DimOpWrapper(&mx::any),
+           "minimum", BinOpWrapper(&mx::minimum),
+           "maximum", BinOpWrapper(&mx::maximum),
+-          "floor", &mx::floor,
++          "floor", static_cast<mx::array (*)(const mx::array&, mx::StreamOrDevice)>(
++              &mx::floor),
+           "ceil", &mx::ceil,
+-          "isnan", &mx::isnan,
++          "isnan", static_cast<mx::array (*)(const mx::array&, mx::StreamOrDevice)>(
++              &mx::isnan),
+           "isinf", &mx::isinf,
+           "isfinite", &mx::isfinite,
+           "isposinf", &mx::isposinf,
+diff --git a/src/stream.h b/src/stream.h
+index 3a10832..d17e0b4 100644
+--- a/src/stream.h
++++ b/src/stream.h
+@@ -14,6 +14,24 @@ struct Type<mx::Stream> : public AllowPassByValue<mx::Stream> {
+                      napi_value prototype);
+ };
+ 
++// MLX 0.26 added ThreadLocalStream as an alternative of StreamOrDevice (the variant converter
++// requires a converter for every alternative). There is no JavaScript representation for it, so
++// it never converts; JS callers pass a Stream, a Device, or nothing.
++template<>
++struct Type<mx::ThreadLocalStream> {
++  static constexpr const char* name = "ThreadLocalStream";
++  static napi_status ToNode(napi_env env,
++                           const mx::ThreadLocalStream&,
++                           napi_value*) {
++    napi_throw_error(env, nullptr,
++                     "[ToNode] ThreadLocalStream has no JavaScript representation");
++    return napi_generic_failure;
++  }
++  static std::optional<mx::ThreadLocalStream> FromNode(napi_env, napi_value) {
++    return std::nullopt;
++  }
++};
++
+ }  // namespace ki
+ 
+ #endif  // SRC_STREAM_H_
+diff --git a/src/transforms.cc b/src/transforms.cc
+index c2be8c0..f3c195b 100644
+--- a/src/transforms.cc
++++ b/src/transforms.cc
+@@ -2,12 +2,11 @@
+ #include "src/ops.h"
+ #include "src/trees.h"
+ 
+-// Needed for detail::compile.
++// Needed for detail::compile and detail::compile_erase.
+ #include "mlx/compile_impl.h"
+-
+-namespace mlx::core {
+-array eval_impl(std::vector<array> outputs, bool async);
+-}
++// MLX 0.26 moved async evaluation to the public mlx::core::async_eval (mlx/transforms.h);
++// the internal eval_impl(std::vector<array>, bool) forward declaration is gone.
++#include "mlx/transforms.h"
+ 
+ namespace {
+ 
+@@ -298,8 +297,15 @@ napi_value AsyncEval(ki::Arguments* args) {
+     return nullptr;
+   }
+   // Start the work.
+-  data->array = std::make_unique<mx::array>(
+-      mx::eval_impl(TreeFlatten(args), true));
++  // MLX 0.26 removed the internal eval_impl(outputs, async=true). The public async_eval schedules
++  // the evaluation and returns; waiting on the last output blocks until it has completed.
++  std::vector<mx::array> outputs = TreeFlatten(args);
++  if (outputs.empty()) {
++    args->ThrowError("asyncEval requires at least one array");
++    return nullptr;
++  }
++  mx::async_eval(outputs);
++  data->array = std::make_unique<mx::array>(std::move(outputs.back()));
+   if (napi_queue_async_work(data->env, data->work) != napi_ok) {
+     args->ThrowError("Failed to queue async work");
+     return nullptr;
+@@ -356,7 +362,8 @@ Compile(ki::Persistent js_func, std::optional<bool> shapeless) {
+   // collected in JS.
+   auto erase_compilation_cache = [](void* func_id) {
+     CompiledFunctionRelay().erase(func_id);
+-    mx::detail::compile_erase(reinterpret_cast<std::uintptr_t>(func_id));
++    mx::detail::compile_erase(mx::detail::compile_cache(),
++                              reinterpret_cast<std::uintptr_t>(func_id));
+   };
+   std::shared_ptr<void> freer(js_func.Id(), erase_compilation_cache);
+   // Return a wrapper that calls mx::compile lazily instead of calling the
+diff --git a/src/utils.cc b/src/utils.cc
+index b827c53..358ded5 100644
+--- a/src/utils.cc
++++ b/src/utils.cc
+@@ -1,10 +1,15 @@
+ #include "src/array.h"
+ #include "src/utils.h"
+ 
+-mx::Shape PutIntoVector(std::variant<int, mx::Shape> shape) {
++std::vector<int> PutIntoVector(std::variant<int, std::vector<int>> shape) {
+   if (auto i = std::get_if<int>(&shape); i)
+     return {*i};
+-  return std::move(std::get<mx::Shape>(shape));
++  return std::move(std::get<std::vector<int>>(shape));
++}
++
++mx::Shape ToShape(std::variant<int, std::vector<int>> shape) {
++  std::vector<int> v = PutIntoVector(std::move(shape));
++  return mx::Shape(v.begin(), v.end());
+ }
+ 
+ std::vector<int> GetReduceAxes(OptionalAxes value, int dims) {
+diff --git a/src/utils.h b/src/utils.h
+index 8e9fd41..5e42c76 100644
+--- a/src/utils.h
++++ b/src/utils.h
+@@ -11,6 +11,40 @@ namespace mx = mlx::core;
+ using OptionalAxes = std::variant<std::monostate, int, std::vector<int>>;
+ using ScalarOrArray = std::variant<bool, float, mx::array>;
+ 
++namespace ki {
++
++// MLX 0.32 replaced std::vector<int> with SmallVector<int> for shapes and indices (and uses
++// SmallVector<long long> in places). The JS side keeps seeing a plain array, or a single number
++// meaning a one-dimensional shape.
++template<typename T>
++struct Type<mx::SmallVector<T>> {
++  static constexpr const char* name = "Shape";
++  static napi_status ToNode(napi_env env,
++                            const mx::SmallVector<T>& vec,
++                            napi_value* result) {
++    napi_status s = napi_create_array_with_length(env, vec.size(), result);
++    if (s != napi_ok) return s;
++    for (size_t i = 0; i < vec.size(); ++i) {
++      napi_value el;
++      s = ConvertToNode(env, vec[i], &el);
++      if (s != napi_ok) return s;
++      s = napi_set_element(env, *result, i, el);
++      if (s != napi_ok) return s;
++    }
++    return napi_ok;
++  }
++  static std::optional<mx::SmallVector<T>> FromNode(napi_env env,
++                                                    napi_value value) {
++    if (auto single = FromNodeTo<T>(env, value); single)
++      return mx::SmallVector<T>(1, *single);
++    auto vec = FromNodeTo<std::vector<T>>(env, value);
++    if (!vec) return std::nullopt;
++    return mx::SmallVector<T>(vec->begin(), vec->end());
++  }
++};
++
++}  // namespace ki
++
+ // Read args into a vector of types.
+ template<typename T>
+ bool ReadArgs(ki::Arguments* args, std::vector<T>* results) {
+@@ -25,6 +59,20 @@ bool ReadArgs(ki::Arguments* args, std::vector<T>* results) {
+   return true;
+ }
+ 
++// MLX 0.26+ uses SmallVector for shapes and split indices; same contract as above.
++template<typename T>
++bool ReadArgs(ki::Arguments* args, mx::SmallVector<T>* results) {
++  while (args->RemainingsLength() > 0) {
++    std::optional<T> a = args->GetNext<T>();
++    if (!a) {
++      args->ThrowError(ki::Type<T>::name);
++      return false;
++    }
++    results->push_back(std::move(*a));
++  }
++  return true;
++}
++
+ // Convert the type to string.
+ template<typename T>
+ std::string ToString(napi_value value, napi_env env) {
+@@ -48,6 +96,9 @@ void DefineToString(napi_env env, napi_value prototype) {
+ // If input is one int, put it into a vector, otherwise just return the vector.
+ std::vector<int> PutIntoVector(std::variant<int, std::vector<int>> shape);
+ 
++// The same, for MLX APIs that take an mx::Shape (SmallVector<int> since MLX 0.26).
++mx::Shape ToShape(std::variant<int, std::vector<int>> shape);
++
+ // Get axis arg from js value.
+ std::vector<int> GetReduceAxes(OptionalAxes value, int dims);
+ 

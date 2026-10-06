@@ -22,12 +22,13 @@
     "test:coverage": "vitest run --coverage",
     "knip": "knip",
     "check:size": "node scripts/check-size.mjs",
+    "check:native": "tools/native/build.sh --check",
     "check:licenses": "node scripts/sync-licenses.mjs --check",
     "sync:licenses": "node scripts/sync-licenses.mjs",
     "check:publint": "publint packages/mlayax && publint packages/mlayax-darwin-arm64",
     "check:attw": "attw --pack packages/mlayax --profile esm-only",
     "verify": "biome ci && tsc -b && tsc -p tsconfig.test.json && vitest run && npm run check:licenses",
-    "verify:release": "npm run verify && npm run check:publint && npm run check:attw && npm run check:size"
+    "verify:release": "npm run verify && npm run check:publint && npm run check:attw && npm run check:size && npm run check:native"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.4",

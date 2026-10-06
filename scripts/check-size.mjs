@@ -23,7 +23,15 @@ const TARGETS = [
     // TASKS.md §0: TypeScript/JS only, < 300 KB.
     budgetBytes: 300 * 1024,
     kind: "unpacked",
-    allow: [/^package\.json$/, /^README\.md$/, /^LICENSE$/, /^NOTICE$/, /^dist\//, /^vendor\//],
+    allow: [
+      /^package\.json$/,
+      /^README\.md$/,
+      /^LICENSE$/,
+      /^NOTICE$/,
+      /^licenses\//,
+      /^dist\//,
+      /^vendor\//,
+    ],
   },
   {
     dir: "packages/mlayax-darwin-arm64",

@@ -11,6 +11,14 @@ coverage/
 # pack output
 *.tgz
 
+# native payload — built by tools/native/build.sh (or CI), ~210 MiB raw, never committed
+packages/mlayax-darwin-arm64/lib/
+packages/mlayax-darwin-arm64/VERSION
+packages/mlayax-darwin-arm64/SHA256SUMS
+
+# native build scratch
+/tmp/mlayax-node-mlx/
+
 # tooling caches
 .huggingface/
 .cache/

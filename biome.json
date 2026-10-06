@@ -60,6 +60,12 @@
       "assist": { "enabled": false }
     },
     {
+      "includes": ["**/bench/**", "**/tools/**"],
+      "linter": { "enabled": false },
+      "formatter": { "enabled": false },
+      "assist": { "enabled": false }
+    },
+    {
       "includes": ["**/*.test.ts", "**/test/**"],
       "linter": {
         "rules": {

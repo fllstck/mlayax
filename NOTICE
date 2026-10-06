@@ -33,5 +33,5 @@ licence. The architecture implemented here follows the published Laya model.
 
 --------------------------------------------------------------------------
 This product includes software developed by Apple Inc. (MLX) and by
-frost-beta (node-mlx). See LICENSES/ in the platform package for the full
-licence texts.
+frost-beta (node-mlx). See licenses/ in each package for the full licence
+texts.
