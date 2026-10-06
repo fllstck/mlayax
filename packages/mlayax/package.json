@@ -1,0 +1,39 @@
+{
+  "name": "@fllstck/mlayax",
+  "version": "0.1.0",
+  "description": "Laya typed-decision runtime for Node and Bun on Apple Silicon, in TypeScript on MLX. No Python, no subprocess.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "mlx",
+    "apple-silicon",
+    "laya",
+    "decision-model",
+    "typescript",
+    "bun"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "optionalDependencies": {
+    "@fllstck/mlayax-darwin-arm64": "0.1.0"
+  }
+}

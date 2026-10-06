@@ -1,0 +1,42 @@
+{
+  "name": "mlayax-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Monorepo for @fllstck/mlayax — a Laya typed-decision runtime for Node and Bun on Apple Silicon (MLX)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean && rm -rf coverage",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "knip": "knip",
+    "check:size": "node scripts/check-size.mjs",
+    "check:licenses": "node scripts/sync-licenses.mjs --check",
+    "sync:licenses": "node scripts/sync-licenses.mjs",
+    "check:publint": "publint packages/mlayax && publint packages/mlayax-darwin-arm64",
+    "check:attw": "attw --pack packages/mlayax --profile esm-only",
+    "verify": "biome ci && tsc -b && vitest run && npm run check:licenses",
+    "verify:release": "npm run verify && npm run check:publint && npm run check:attw && npm run check:size"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.4",
+    "@biomejs/biome": "^2.3.4",
+    "@types/node": "^22.19.1",
+    "@vitest/coverage-v8": "^3.2.4",
+    "knip": "^5.71.0",
+    "publint": "^0.3.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "workspaces": {
+    "packages/mlayax": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/mlayax-darwin-arm64": {
+      "entry": ["package.json"],
+      "project": []
+    }
+  }
+}

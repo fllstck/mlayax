@@ -1,0 +1,29 @@
+{
+  "name": "@fllstck/mlayax-darwin-arm64",
+  "version": "0.1.0",
+  "description": "Native MLX payload for @fllstck/mlayax: node_mlx.node, libmlx.dylib, libjaccl.dylib, mlx.metallib. Apple Silicon only.",
+  "license": "MIT",
+  "type": "commonjs",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "licenses",
+    "VERSION",
+    "SHA256SUMS",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "sideEffects": false
+}

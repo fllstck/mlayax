@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# test output
+coverage/
+
+# pack output
+*.tgz
+
+# tooling caches
+.huggingface/
+.cache/
+.turbo/
+
+# local model checkpoints — never committed, never bundled (~803 MiB)
+models/
+test/fixtures/tiny/*.safetensors.tmp
+
+# macOS
+.DS_Store
+
+# editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
