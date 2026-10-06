@@ -1,20 +1,31 @@
 /**
  * Loading the native MLX addon — the one place the process touches native code.
  *
- * Two properties matter here, and both are load-time requirements rather than nice-to-haves:
+ * Three properties matter here, and all three are load-time requirements rather than nice-to-haves:
  *
  * 1. **Lazy.** Nothing loads the addon until `loadMx()` is called. `import "@fllstck/mlayax"` must
  *    work on a Linux CI runner so the pure-TypeScript `core` layer can be unit-tested there; a
  *    top-level `require` would make the package unimportable off Apple Silicon.
- * 2. **Fail fast and specifically.** A wrong platform, a missing payload, or a payload built for a
- *    different MLX must say so at load, not surface later as a shape error or a symbol mismatch.
- *
- * Not handled here, because it can only be tested once the platform package exists (phase 5): the
- * mixing guard for a second `libmlx` already resident in the process, and the verification of
- * `SHA256SUMS`/`VERSION` against the shipped payload.
+ * 2. **Fail fast and specifically.** A wrong platform, a missing payload, a payload built for a
+ *    different MLX, or a second `libmlx` already resident must say so at load, not surface later as
+ *    a shape error or a mangled dyld symbol.
+ * 3. **Order matters.** The mixing guard has to run *before* the addon is loaded: once dyld has
+ *    bound the wrong `libmlx`, the process cannot recover. See {@link ./mixing.js}.
  */
 
 import { createRequire } from "node:module";
+import path from "node:path";
+import {
+  ALLOW_MIXED_ENV,
+  bytesOf,
+  checkForMixedMlx,
+  describeMlxLoadFailure,
+  MLX_LIBRARY_NAMES,
+  readOf,
+  realpathOf,
+  residentSharedObjects,
+  sha256Of,
+} from "./mixing.js";
 import type { MlxCore, MlxModule } from "./types.js";
 
 const require = createRequire(import.meta.url);
@@ -25,14 +36,55 @@ const VENDORED_CORE = "../../vendor/node-mlx/core.cjs";
 let cached: MlxModule | null = null;
 
 /**
+ * Check for a resident MLX build before letting dyld bind ours.
+ *
+ * Returns early on runtimes that do not expose the image list — the load-time error translation is
+ * the only defence available there, and it is not needed when the list is empty. The policy itself
+ * (`checkForMixedMlx`) and every filesystem read it needs live in `mixing.ts`, where they are
+ * unit-tested against real files; this function only supplies the process this is running in.
+ */
+function guardAgainstMixedMlx(libDir: string): void {
+  const resident = residentSharedObjects();
+  if (resident.length === 0) return;
+
+  const ours: Record<string, string> = {};
+  for (const name of MLX_LIBRARY_NAMES) ours[name] = path.join(libDir, name);
+
+  checkForMixedMlx({
+    libDir,
+    resident,
+    ours,
+    bytesOf,
+    sha256Of,
+    readOf,
+    realpathOf,
+    allowMixed: process.env[ALLOW_MIXED_ENV] === "1",
+    warn: (message) => process.emitWarning(message, "RuntimeWarning"),
+  });
+}
+
+/**
  * Load the native MLX core, memoised.
  *
  * The addon itself is cached by Node's module loader, so repeated calls are cheap; this memo exists
- * so the resolution and the platform guard run once.
+ * so the resolution and the guards run once.
  */
 export function loadMxModule(): MlxModule {
   if (cached !== null) return cached;
-  const loaded = require(VENDORED_CORE) as MlxModule;
+
+  // Resolve first: this is what throws the described "wrong platform / missing payload" error, and
+  // it is also the directory the mixing guard compares against.
+  const libDir = path.dirname(resolveNativeAddonPath());
+  guardAgainstMixedMlx(libDir);
+
+  let loaded: MlxModule;
+  try {
+    loaded = require(VENDORED_CORE) as MlxModule;
+  } catch (error) {
+    // Reached on Bun (no image list to check) and on Node if a foreign library appeared in between.
+    throw describeMlxLoadFailure(error, libDir);
+  }
+
   if (typeof loaded?.core !== "object" || loaded.core === null) {
     throw new Error(
       `The vendored MLX core layer at ${VENDORED_CORE} loaded but did not expose \`core\`. ` +

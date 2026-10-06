@@ -13,21 +13,36 @@ resolve a known-good native artifact without building anything on the user's mac
 | `lib/libjaccl.dylib` | MLX collective-comms library (a link-time dependency) |
 | `lib/mlx.metallib` | the compiled Metal kernels — the build class matters for throughput |
 | `SHA256SUMS` | checksums for every file above |
-| `VERSION` | node-mlx commit, MLX tag, build mode, metallib/addon hashes, build timestamp |
+| `VERSION` | node-mlx commit, MLX tag, build mode, metallib/addon hashes, `min_macos`, build timestamp |
 
 ## Requirements
 
 - `os: darwin`, `cpu: arm64` — npm will skip this package elsewhere, which is why it is an
   *optional* dependency of the façade
-- macOS ≥ 14
+- macOS ≥ 26.2. The three MLX files are copied verbatim from a pinned prebuilt MLX, and that build
+  declares `minos 26.2`, so it is `libmlx.dylib` that refuses to load on anything older. `VERSION`
+  records the floor as `min_macos`, and the build refuses to publish a payload whose declared floor
+  sits below what the shipped dylib needs.
 - Node ≥ 22, or Bun ≥ 1.2
 
 ## Warning: do not mix MLX builds in one process
 
-Two different `libmlx` builds cannot coexist in a single process. A foreign `libmlx` already
-resident will silently satisfy `@rpath/libmlx.dylib`, and the process then dies with a symbol
-mismatch. `@fllstck/mlayax` checks for this at load time and fails with a clear message; until
-then, keep other MLX packages in separate processes or `dispose()` them first.
+Two different `libmlx` builds cannot coexist in a single process. macOS resolves a dynamic library by
+install name, and virtually every MLX distribution published for Node names itself
+`@rpath/libmlx.dylib`, so a foreign build already resident silently satisfies our addon's request for
+it. The process then dies on a symbol mismatch — measured, with
+`@johnhenry/backend-mlx-darwin-arm64` resident first:
+
+```text
+dlopen(…/mlayax-darwin-arm64/lib/node_mlx.node, 0x0001): Symbol not found:
+  __ZN3mlx4core10gather_qmmERKNS0_5arrayES3_S3_RKNSt3__18optionalIS1_EES6_S6_bNS5_IiEES9_…
+```
+
+`@fllstck/mlayax` detects this before loading and names both paths instead; see the façade README's
+troubleshooting section. The failure is not recoverable *in* that process — unloading the addon does
+not unload the dylib — so the fix is to remove the competing package or move it to a worker process.
+A resident MLX with an absolute install name (Homebrew's, for example) cannot take our slot, and is
+reported as a note rather than an error.
 
 ## Licensing
 

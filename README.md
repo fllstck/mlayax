@@ -22,7 +22,7 @@ the Hugging Face cache on first use.
 ## Requirements
 
 - Apple Silicon (`darwin` / `arm64`); Intel Macs and Windows/Linux are out of scope for 0.1.0
-- macOS ≥ 14
+- macOS ≥ 26.2 — set by the pinned MLX build, which declares `minos 26.2` (see `TASKS.md` §10.2)
 - Node ≥ 22, or Bun ≥ 1.2
 - The MLX build is pinned — see the compatibility table (lands with Phase 8)
 

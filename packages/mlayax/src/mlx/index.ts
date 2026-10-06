@@ -38,6 +38,28 @@ export {
   resetMxCacheForTests,
   resolveNativeAddonPath,
 } from "./binding.js";
+export {
+  ALLOW_MIXED_ENV,
+  assertNoMixedMlx,
+  bytesOf,
+  checkForMixedMlx,
+  describeMlxLoadFailure,
+  type ForeignMlxLibrary,
+  HEADER_PREFIX_BYTES,
+  hasMixingReport,
+  inspectResidentMlx,
+  type MixingReport,
+  MLX_LIBRARY_NAMES,
+  MlxMixingError,
+  mixingError,
+  mixingWarning,
+  readInstallName,
+  readOf,
+  realpathOf,
+  residentSharedObjects,
+  type SharedObjectReporter,
+  sha256Of,
+} from "./mixing.js";
 
 export {
   type AgentConfig,
