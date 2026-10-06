@@ -24,6 +24,7 @@ export {
   type ForwardResult,
   type LoadOptions,
   load,
+  loadAsync,
   MlxAgent,
   type Prediction,
   type Prepared,

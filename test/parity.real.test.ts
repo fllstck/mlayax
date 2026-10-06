@@ -20,8 +20,13 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { resolveCachedModel } from "../packages/mlayax/src/hub.js";
 import type { MlxAgent, Answer as MlxAnswer } from "../packages/mlayax/src/index.js";
+import { resolveNativeAddonPath } from "../packages/mlayax/src/mlx/binding.js";
 import { compare, describeComparison, loadReference } from "./helpers/scorecard.js";
+
+/** The checkpoint this project targets, as a repository id. */
+const REPO_ID = "aac6fef/laya-mlx";
 
 const MODEL_DIR = process.env.MLAYAX_MODEL_DIR;
 const FP32_TOLERANCE = 0;
@@ -208,3 +213,61 @@ describe.skipIf(MODEL_DIR === undefined || MODEL_DIR === "")("runtime hazards", 
     expect(long.usage.state_tokens_dropped).toBeGreaterThan(0);
   });
 });
+
+/**
+ * The other half of Phase 3's acceptance line: `load()` from the **Hub cache**, not just a directory.
+ *
+ * Gated on the cache existing rather than on `MLAYAX_MODEL_DIR`, because that is the whole point — the
+ * caller hands over a repository id and the runtime finds the checkpoint itself. This is the test
+ * that would catch a revision not being recorded, or the cache lookup disagreeing with the directory
+ * loader.
+ */
+const CACHED_HUB_MODEL = (() => {
+  try {
+    return resolveCachedModel(REPO_ID);
+  } catch {
+    return null;
+  }
+})();
+
+/**
+ * The cache existing is not enough: loading it needs the native payload too. Without this second gate
+ * these tests run on a machine that has the checkpoint cached but no built addon, and fail for a
+ * reason that has nothing to do with the Hub.
+ */
+const NATIVE_AVAILABLE = (() => {
+  try {
+    resolveNativeAddonPath();
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+describe.skipIf(CACHED_HUB_MODEL === null || !NATIVE_AVAILABLE)(
+  "load() by repository id from the Hub cache",
+  () => {
+    it("resolves the cache, records the revision, and matches the reference", async () => {
+      const { load } = await import("../packages/mlayax/src/index.js");
+      const agent = load(REPO_ID, { dtype: "float32" });
+
+      // Provenance is recorded, and it agrees with what the cache resolver found.
+      expect(agent.revision).toBe(CACHED_HUB_MODEL?.revision);
+      expect(agent.sourcePath).toBe(CACHED_HUB_MODEL?.path);
+
+      const reference = loadReference(referencePath("fp32"));
+      const first = reference.cases[0];
+      if (first === undefined) throw new Error("reference has no cases");
+      const prediction = await agent.predict(first.state, first.questions);
+      const comparison = compare(first.answers, prediction.answers, 0);
+      expect(comparison.mismatches, describeComparison("hub cache load", comparison)).toEqual([]);
+      expect(comparison.maxDelta).toBe(0);
+    }, 120_000);
+
+    it("loadAsync is a no-op on a warm cache", async () => {
+      const { loadAsync } = await import("../packages/mlayax/src/index.js");
+      const agent = await loadAsync(REPO_ID, { dtype: "float16" });
+      expect(agent.revision).toBe(CACHED_HUB_MODEL?.revision);
+    }, 120_000);
+  },
+);

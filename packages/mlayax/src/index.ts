@@ -29,6 +29,7 @@
  */
 
 export * from "./core/index.js";
+export * from "./hub.js";
 export * from "./mlx/index.js";
 
 /** The published version of this package. Keep in lockstep with `package.json`. */

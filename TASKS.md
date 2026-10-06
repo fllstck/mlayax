@@ -352,16 +352,74 @@ whose runtime could not load. Caught by the size gate's allowlist rather than by
 job in Phase 7 is what should catch this class permanently.
 
 
-### Phase 3b — Hugging Face fetcher (`hub.ts`)
+### Phase 3b — Hugging Face fetcher (`hub.ts`) — **DONE 2026-10-06**
 
 (Kept as 3b because it is part of the runtime layer.)
 
-- [ ] Cache layout compatible with `HF_HOME`/`HF_HUB_CACHE` (reuse the Python default so existing
+- [x] Cache layout compatible with `HF_HOME`/`HF_HUB_CACHE` (reuse the Python default so existing
       caches work), `snapshots/<rev>/` + `blobs/`, atomic writes.
-- [ ] Options: `token`, `revision`, `offline`, `onProgress`, `fetch` (for tests/proxies).
-- [ ] Verify `SHA256SUMS` where the repo provides it; record the resolved revision in the agent.
-- [ ] Test with a local HTTP fixture server (no network in CI) + one opt-in live test.
-- [ ] Acceptance: cold download, warm cache, offline-with-cache, offline-without-cache (clear error).
+      `defaultCacheDir` follows upstream's precedence (`HF_HUB_CACHE` → `HUGGINGFACE_HUB_CACHE` →
+      `HF_HOME/hub` → `$XDG_CACHE_HOME/huggingface/hub` → `~/.cache/huggingface/hub`), each branch
+      tested. **Read-compatibility is verified two ways**: against a faithful replica of the layout the
+      Python client wrote on this machine (including the shared-blob indirection we do not reproduce),
+      and against the real cache on this machine when it exists. Writes land in `<blob>.incomplete`
+      and are renamed into place, and a failed download deletes its partial file.
+- [x] Options: `token`, `revision`, `offline`, `onProgress`, `fetch` (for tests/proxies).
+      Plus `cacheDir`, `endpoint`, and `force`.
+      **Credential handling:** the token goes to the API and the `resolve` URL but **not** to the CDN
+      the latter redirects to — the resolve request uses `redirect: "manual"` and the redirect target
+      is fetched anonymously. Asserted by a fixture test that fails if the token leaks.
+- [x] Verify `SHA256SUMS` where the repo provides it; record the resolved revision in the agent.
+      Verification happens **before the blob is published**, not in a sweep afterwards — see the bug
+      note below, which is the most transferable thing in this phase. The agent now carries
+      `revision` and `sourcePath`.
+- [x] Test with a local HTTP fixture server (no network in CI) + one opt-in live test.
+      **25 fixture tests** on a loopback `node:http` server that records every request and its
+      `Authorization` header, so “the network was not used” is asserted rather than inferred. The
+      **opt-in live test** (`MLAYAX_LIVE_HUB=1`) immediately earned its keep — see below.
+- [x] Acceptance: cold download, warm cache, offline-with-cache, offline-without-cache (clear error).
+      All four are tested; the warm case asserts **zero** HTTP requests, not merely “fewer”.
+
+**The live test found a bug the fixture server could not.** The Hub answers the resolve URL with a
+*relative* `Location` (`/api/resolve-cache/models/...`) for files it already has cached, while LFS
+objects redirect to an absolute CDN URL. Passing a relative value to `fetch` throws
+`Failed to parse URL from /api/resolve-cache/...`. The fixture server had only ever emitted absolute
+locations, so it confirmed agreement with *my* model of the API and nothing more. That is the whole
+argument for keeping the live test in the repository, and a fixture case emitting a relative
+`Location` was added so the regression is covered offline from now on.
+
+**A verification bug worth remembering.** `parseSha256Sums` returns `[path, digest]`, and the caller
+destructured it as `[digest, path]` — producing a lookup keyed by digest that never matched, so
+checksum verification silently did nothing while looking like it was in place. Fixing it exposed a
+second, worse design flaw: verification ran as a sweep *after* every file was published, so a failure
+left a complete-looking snapshot behind and **the next run would accept it without checking** — the
+run that caught the tampering would be the run that blessed it. Verification now happens per file,
+before the rename, so a failure keeps the snapshot incomplete and the next run retries. The test
+asserts both that nothing was published and that a second call fails too.
+
+Two more fixes from this phase: `path.isAbsolute("https://x")` is `false` (it asks about filesystem
+paths), which prefixed the endpoint onto an already-absolute `Link` header URL; and the snapshot
+symlink must be computed from each file's own directory, because `encoder/config.json` sits a level
+deeper than `model.safetensors` and a fixed `../../blobs/<name>` dangles. Both were caught by
+assertions that check the *files resolve*, not that the code ran.
+
+**Not reproduced, deliberately:** recent `huggingface_hub` keeps LFS payloads in a shared
+`hub/blobs/<xx>/<sha256>` store with the per-repo blob a symlink into it. We write a regular file at
+the per-repo path. Both readers resolve a snapshot entry either way; we give up cross-repo
+deduplication. Also worth knowing: a cache written by the Python client need not contain every file
+the tree lists (it omits `.gitattributes` here), so the first run after switching languages fetches a
+few small files. The live test therefore asserts the 803 MiB payload's **mtime is unchanged** rather
+than that nothing was fetched at all.
+
+**API shape:** `load()` is synchronous and network-free (a repository id resolves against the cache,
+or fails with guidance pointing at `loadAsync`); `loadAsync()` downloads when needed. A sync call that
+silently performed an 803 MiB download would be worse than one that fails, and making `load` async
+would make every consumer async for the benefit of one first run. A cached snapshot is trusted for
+a branch name — that is what `refs/<revision>` is for — with `force: true` to re-check upstream.
+
+**Budget watch:** the façade is now **282.0 KiB of its 300 KB budget** (65 files). Source maps are
+roughly half of that and are the first thing to drop if Phase 4's service layer pushes it over; the
+size gate will say so rather than letting the publish fail.
 
 ### Phase 4 — Service layer
 

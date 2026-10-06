@@ -13,7 +13,7 @@
  * affected and that their confidence is therefore uncalibrated.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   type Answer,
@@ -38,6 +38,7 @@ import {
   toInternal,
 } from "../core/index.js";
 import { loadTokenizer } from "../core/tokenizer.js";
+import { downloadModel, type HubOptions, resolveCachedModel } from "../hub.js";
 import { loadMx } from "./binding.js";
 import {
   type AgentConfig,
@@ -53,8 +54,13 @@ import type { MlxArray, MlxCore, MlxDType } from "./types.js";
 /** Selectable weight precision. `bfloat16` is accepted for symmetry; the checkpoints ship fp16. */
 export type DTypeName = "float32" | "float16" | "bfloat16";
 
-/** Load-time options. Every one has a documented default. */
-export interface LoadOptions {
+/**
+ * Load-time options. Every one has a documented default.
+ *
+ * The `HubOptions` half only applies when {@link load} is given a repository id rather than a local
+ * directory: `token`, `revision`, `offline`, `onProgress`, `fetch`, `cacheDir`, `endpoint`.
+ */
+export interface LoadOptions extends HubOptions {
   /** Weight precision. Default `float16`, which is what the reference numbers were measured at. */
   dtype?: DTypeName;
   /** Rows per forward. Default 16. */
@@ -179,6 +185,15 @@ export class MlxAgent {
   readonly shapeless: boolean;
   /** Padded-length bucket, or 0 for none. */
   readonly lengthBucket: number;
+  /** Directory the checkpoint was read from. */
+  readonly sourcePath: string;
+  /**
+   * The commit this checkpoint came from, or `null` for a local directory.
+   *
+   * Recorded so a caller can log or persist *what* was loaded, not just that something was: a
+   * checkpoint's answers are only reproducible against a named revision.
+   */
+  readonly revision: string | null;
 
   /** The checkpoint's own temperatures, unclamped, kept for inspection. */
   readonly temperatureRaw: number[];
@@ -214,6 +229,8 @@ export class MlxAgent {
     cacheMasks: boolean;
     shapeless: boolean;
     lengthBucket: number;
+    sourcePath: string;
+    revision: string | null;
     compiledForward: MlxAgent["compiledForward"];
   }) {
     this.mx = init.mx;
@@ -228,6 +245,8 @@ export class MlxAgent {
     this.cacheMasks = init.cacheMasks;
     this.shapeless = init.shapeless;
     this.lengthBucket = init.lengthBucket;
+    this.sourcePath = init.sourcePath;
+    this.revision = init.revision;
     this.compiledForward = init.compiledForward;
 
     this.temperatureRaw = (init.cfg.temperature ?? [1, 1, 1]).map(Number);
@@ -245,9 +264,16 @@ export class MlxAgent {
    * Load a checkpoint from a directory.
    *
    * The directory must contain `rl_agent_config.json`, `encoder/config.json`, `model.safetensors`
-   * and `tokenizer/`. Nothing is downloaded here — that is the Hub fetcher's job (phase 3b).
+   * and `tokenizer/`. Prefer {@link load}, which also accepts a repository id.
    */
-  static load(modelDir: string, options: LoadOptions = {}): MlxAgent {
+  static load(
+    modelDir: string,
+    options: LoadOptions = {},
+    provenance: { sourcePath: string; revision: string | null } = {
+      sourcePath: modelDir,
+      revision: null,
+    },
+  ): MlxAgent {
     const mx = loadMx();
     const dtypeName = options.dtype ?? "float16";
     if (options.device === "cpu") mx.setDefaultDevice(mx.cpu);
@@ -323,6 +349,8 @@ export class MlxAgent {
       cacheMasks: options.cacheMasks ?? true,
       shapeless,
       lengthBucket: options.lengthBucket ?? 0,
+      sourcePath: provenance.sourcePath,
+      revision: provenance.revision,
       compiledForward,
     });
 
@@ -655,7 +683,60 @@ function assertUsableTemperatures(cfg: AgentConfig): void {
   }
 }
 
-/** Load a checkpoint. Convenience wrapper around {@link MlxAgent.load}. */
-export function load(modelDir: string, options: LoadOptions = {}): MlxAgent {
-  return MlxAgent.load(modelDir, options);
+/**
+ * Load a checkpoint, from a local directory or from the Hugging Face cache.
+ *
+ * Synchronous, and therefore **network-free**: given a repository id this resolves the already-cached
+ * snapshot and fails with guidance if there is none. Use {@link loadAsync} to download.
+ *
+ * ```ts
+ * const agent = load("aac6fef/laya-mlx");                 // cache hit, or a clear error
+ * const agent = await loadAsync("aac6fef/laya-mlx");     // downloads on a cold cache
+ * const agent = load("./models/english-mlx");            // local directory
+ * ```
+ *
+ * The split is deliberate: making `load` async would make every consumer async for the benefit of
+ * one first run, and a sync call that silently performed an 803 MiB download would be worse still.
+ */
+export function load(source: string, options: LoadOptions = {}): MlxAgent {
+  if (isLocalDirectory(source)) return MlxAgent.load(source, options);
+
+  const cached = resolveCachedModel(source, options);
+  if (cached === null) {
+    const revision = options.revision ?? "main";
+    throw new Error(
+      `${source}@${revision} is not in the Hugging Face cache, and load() does not download.\n` +
+        `Either \`await loadAsync(${JSON.stringify(source)})\` once to populate the cache, or pass a ` +
+        "local directory path holding the checkpoint files.",
+    );
+  }
+  return MlxAgent.load(cached.path, options, {
+    sourcePath: cached.path,
+    revision: cached.revision,
+  });
+}
+
+/**
+ * Load a checkpoint, downloading it from the Hub first if the cache does not have it.
+ *
+ * Accepts the same sources as {@link load} plus the `HubOptions` (`token`, `revision`, `offline`,
+ * `onProgress`, `fetch`, `cacheDir`, `endpoint`). The resolved commit is recorded on the agent as
+ * `revision`, so callers can report exactly which checkpoint produced an answer.
+ */
+export async function loadAsync(source: string, options: LoadOptions = {}): Promise<MlxAgent> {
+  if (isLocalDirectory(source)) return MlxAgent.load(source, options);
+  const resolved = await downloadModel(source, options);
+  return MlxAgent.load(resolved.path, options, {
+    sourcePath: resolved.path,
+    revision: resolved.revision,
+  });
+}
+
+/** True when `source` names an existing directory, as opposed to a repository id. */
+function isLocalDirectory(source: string): boolean {
+  try {
+    return statSync(source).isDirectory();
+  } catch {
+    return false;
+  }
 }
