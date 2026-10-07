@@ -42,18 +42,20 @@ Reference: one 39-token state, fp16, Apple M5, macOS 26.6.2, Node 24.15.0 / Bun 
 
 | metric | value |
 |---|---|
-| one short `choice` question | 9.9 ms (warm p50) |
+| one short `choice` question | 10.3 ms (warm p50) |
 | three questions | 15.1 ms |
-| 16 rows in one forward | 59.1 ms (271 q/s) |
+| 16 rows in one forward | 53.7 ms (298 q/s) |
 | throughput plateau at ≥ 8 rows | ~312 q/s |
 | first call at a new sequence length | ~25–35 ms (one compile trace) |
-| RSS, one model resident | ~0.95–1.0 GiB |
+| RSS, one model resident | 987 MiB |
 | fp32 parity vs Python `laya_mlx` | bit-exact, Δ 0 on 61/61 fields |
 | fp16 parity | Δ ≤ 4e-4, 48/61 fields exact |
 
-For reference, the Python implementation this ports measures 10.2 / 15.4 / 58.4 ms on the same
-machine, and the fastest maintained TypeScript alternative that does not use a compiled binding
-measures 183.5 ms for the same 16 rows.
+For reference, the Python implementation this ports measures 10.2 ms for one short question and
+58.4 ms for 16 rows on the same machine, and the fastest maintained TypeScript alternative that does
+not use a compiled binding measures 183.5 ms for the same 16 rows. Every figure here is produced by
+`bench/` and gated at 1.3x against `bench/baseline.json` (which holds §2's earlier single-call
+measurement, 10.2 / 15.4 / 59.1 ms — hence this build's 0.91x on the 16-row case).
 
 ### Corrections carried into 0.1.0
 

@@ -128,7 +128,8 @@ Real output, from the checkpoint on the Hub, fp16, on an M5 (`Node 24.15`):
 
 Those three questions took **34.6 ms** on the first call (a new sequence length is a fresh `mx.compile`
 trace) and **15.1 ms** warm (p50 of 20 samples); one `choice` question alone is **9.9 ms** warm. The
-published reference numbers in [Performance](#performance) were measured the same way.
+table under [Performance](#performance) is the benchmark harness's, which is what the quality gate
+checks.
 
 ## Prompt construction
 
@@ -226,12 +227,18 @@ Bun 1.3.13 — both measure the same):
 
 | case | time |
 |---|---|
-| one 39-token question (warm) | **9.9 ms** |
+| one 39-token question | **10.3 ms** |
 | three questions (a `choice`, a `score`, a `noul`) | **15.1 ms** |
-| 16 rows in one forward | **59.1 ms** (271 q/s) |
+| 16 rows in one forward | **53.7 ms** (298 q/s) |
 | throughput plateau at ≥ 8 rows | ~312 q/s |
-| RSS with one model resident | ~0.95–1.0 GiB |
+| RSS with one model resident | 987 MiB |
 | first call at a new sequence length | ~25–35 ms (one compile trace) |
+
+Those are `npm run bench`'s numbers — p50 over 10 samples after a warm-up call per shape — and they are
+what `npm run bench:check` gates against its committed baseline. The quickstart's 34.6 ms was the first
+call of a fresh process (a new sequence length is a compile trace), and its 9.9 ms came from a
+20-sample loop in a small script rather than the harness, which is why it differs from 10.3 in the
+table.
 
 For scale: the Python `laya_mlx` this ports is 10.2 ms on the same machine, and the fastest maintained
 FFI alternative in TypeScript is 183.5 ms for the same 16 rows. Why, and what was measured to get

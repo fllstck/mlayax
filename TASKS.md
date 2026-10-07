@@ -734,6 +734,11 @@ pre-flight result belongs to a commit and not to a plan. Four of the five pass:*
 push is a real test, and the `native-source` job's first MLX build from source is the part most likely
 to surprise (this machine has CommandLineTools and no Metal toolchain — §10.11).*
 
+**The release text is written and ready to paste**: [`docs/release-notes-0.1.0.md`](docs/release-notes-0.1.0.md)
+is the GitHub release body, and [`docs/upstream-offers.md`](docs/upstream-offers.md) holds both upstream
+drafts. They are why the last steps below are a paste rather than an afternoon of writing — but check
+the numbers against the tagged commit first, because a release note is a claim.
+
 Publish (manual, in this order — platform package first):
 
 - [ ] `npm login` (2FA on the `@fllstck` scope/org; verify the scope exists and you own it).
@@ -751,13 +756,19 @@ GitHub:
 
 - [ ] Create `fllstck/mlayax` (public), push `main`, then tag `v0.1.0` matching `package.json`.
 - [ ] GitHub release `v0.1.0` with the CHANGELOG entry, the performance table, and the compatibility
-      matrix; link the HF checkpoints and the upstream projects.
+      matrix; link the HF checkpoints and the upstream projects. The body is already written —
+      [`docs/release-notes-0.1.0.md`](docs/release-notes-0.1.0.md), paste it as-is. It carries the
+      numbers, the two unavoidable sharp edges, the limitations, the links and the no-provenance note.
 - [ ] Pin the repo topics: `mlx`, `apple-silicon`, `laya`, `decision-model`, `typescript`, `bun`.
 
 Post-publish:
 
 - [ ] Open a goodwill PR/issue with `tools/native/node-mlx-mlx32.patch` (MLX 0.32 bump) upstream, and
-      a bug report to `@johnhenry/laya` with the `labels` token diff (in `docs/ECOSYSTEM.md`).
+      a bug report to `@johnhenry/laya` with the `labels` token diff (in `docs/ECOSYSTEM.md`). Both are
+      drafted and paste-ready in [`docs/upstream-offers.md`](docs/upstream-offers.md) — with the file-by-file
+      patch summary, the token dump, the four measurements and the credit to their packaging, which is
+      what makes them read as help rather than complaint. Send them **after** publishing, so the links
+      resolve; fill in the release-URL placeholder first.
 - [ ] Watch install reports for the mixing hazard; the README already documents the fix (`dispose()`
       other MLX packages, or keep them in separate processes).
 

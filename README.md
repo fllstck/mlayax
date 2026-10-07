@@ -34,9 +34,10 @@ const { answers, usage } = await agent.predict(
 //                        confidence: 0.8175, answer_confidence: 0.9587, action: { act_probability: 1 } }
 ```
 
-Answering those three questions takes **9.9 ms** for one short question and **15.1 ms** for three, warm,
-on an M5. The full API — question construction, every option, the answer and `usage` shapes, and the
-"two MLX builds in one process" trap — is in
+Answering those three questions takes **9.9 ms** warm for one short question and **15.1 ms** for three on
+an M5; the table below is the benchmark harness the quality gate checks. The full API — question
+construction, every option, the answer and `usage` shapes, and the "two MLX builds in one process"
+trap — is in
 [`packages/mlayax/README.md`](packages/mlayax/README.md), which is also the page npm shows.
 
 ## What you get
@@ -63,13 +64,18 @@ The numbers this repository is judged by. One 39-token state, fp16, Apple M5, No
 
 | metric | mlayax | Python `laya_mlx` (reference) |
 |---|---:|---:|
-| one short `choice` question | **9.9 ms** | 10.2 ms |
-| three questions | **15.1 ms** | 15.4 ms |
-| 16 rows in one forward | **59.1 ms** (271 q/s) | 58.4 ms |
+| one short `choice` question | **10.3 ms** | 10.2 ms |
+| three questions | **15.1 ms** | — |
+| 16 rows in one forward | **53.7 ms** (298 q/s) | 58.4 ms |
 | throughput plateau at ≥ 8 rows | ~312 q/s | — |
-| RSS, one model resident | ~0.95–1.0 GiB | — |
+| RSS, one model resident | 987 MiB | — |
 | fp32 parity vs Python, per field | **bit-exact** (61/61) | — |
 | fp16 parity | Δ ≤ 4e-4 (48/61 exact) | — |
+
+Python's column is what the implementation this ports measured (one short question, and 16 rows); `—`
+means it was not measured there. The `16 rows` figure is the harness's p50, against a committed gate
+baseline of §2's single-call 59.1 ms (271 q/s) and a 1400 MiB RSS ceiling — so this build sits at 0.91x
+of the baseline, not below a bar it had to clear by luck.
 
 The harness for all of it is [`bench/`](bench) (`npm run bench`, `npm run bench:check`), gated at
 1.3x against [`bench/baseline.json`](bench/baseline.json) — warn above 1.3x, fail above 2x, and
@@ -92,9 +98,10 @@ Three decisions define the shape of it, all argued with measurements in
 
 - **A compiled binding, not FFI.** Every maintained alternative (`@johnhenry/backend-mlx`,
   `@nielspeter/mlx-ts`, `mlx-bun`) is FFI over mlx-c and issues one JS call per op, so `mlx_compile`
-  cannot remove the call overhead: measured at 183.5 ms for the 16 rows this does in 59.1 ms.
+  cannot remove the call overhead: measured at 183.5 ms for the 16 rows this does in 53.7 ms.
 - **Link a current MLX.** The popular `@frost-beta/mlx` vendors MLX 0.25 (last published 2025-04-19);
-  we patch node-mlx for MLX 0.32.3 (`tools/native/node-mlx-mlx32.patch`, 10 files) rather than wait.
+  we patch node-mlx for MLX 0.32.3 (`tools/native/node-mlx-mlx32.patch`, 10 files, +242/−69) rather
+  than wait.
 - **The MLX *build* is a first-class requirement.** The Python wheel's `mlx.metallib` (190 MB) is ~35 %
   faster than Homebrew's (137 MB) for the same version, so the build script refuses the slow class.
 
