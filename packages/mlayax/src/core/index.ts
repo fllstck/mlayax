@@ -3,8 +3,9 @@
  *
  * Prompt construction, calibration and answer shaping. Nothing here touches MLX, a GPU or the file
  * system, so it is unit-testable on any platform and is the part of the pipeline that actually
- * decides what the model is asked. The MLX runtime lives in `../mlx` and the service in
- * `../service`.
+ * decides what the model is asked. The MLX runtime lives in `../mlx`, the Hugging Face fetcher in
+ * `../hub`, and there is deliberately no service layer: batching belongs to the caller, who is the
+ * only one who can see their own concurrency.
  */
 
 export type {

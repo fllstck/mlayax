@@ -69,8 +69,8 @@ export interface LoadOptions extends HubOptions {
   device?: "gpu" | "cpu";
   /**
    * Dispose intermediate tensors after each forward (`mx.tidy`). Default on for the synchronous
-   * path. The batching service turns it **off** and disposes its feeds explicitly, because
-   * `mx.tidy` around an in-flight `mx.asyncEval` is unsafe.
+   * path. Turn it **off** when you dispose your own feeds, because `mx.tidy` around an in-flight
+   * `mx.asyncEval` is unsafe: it frees intermediates as soon as the callback returns.
    */
   tidy?: boolean;
   /** Wrap the forward in `mx.compile`. Default on; it removes the per-op JS call overhead (-12 %). */
@@ -481,9 +481,9 @@ export class MlxAgent {
    * One forward over already-prepared items, flattened to the host.
    *
    * `asyncEval` keeps the event loop responsive while the GPU works, which is what a server wants.
-   * Note the asymmetry with `tidy`: `mx.tidy` disposes intermediates when its callback returns, so
-   * it must not wrap an in-flight async evaluation — the service path turns it off and disposes its
-   * feeds explicitly.
+   * Note the asymmetry with `tidy`: `mx.tidy` disposes intermediates when its callback returns, so it
+   * must not wrap an in-flight async evaluation — a caller that needs both turns `tidy` off and
+   * disposes its own feeds explicitly.
    */
   async forwardItems(
     items: PreparedItem[],

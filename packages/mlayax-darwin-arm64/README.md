@@ -25,6 +25,18 @@ resolve a known-good native artifact without building anything on the user's mac
   sits below what the shipped dylib needs.
 - Node ≥ 22, or Bun ≥ 1.2
 
+## Verifying the payload
+
+```bash
+cd node_modules/@fllstck/mlayax-darwin-arm64/lib && shasum -a 256 -c ../SHA256SUMS
+cat ../VERSION                          # node-mlx commit, MLX tag, build class, floor, addon hash
+otool -l libmlx.dylib | grep -A2 LC_BUILD_VERSION   # the macOS floor, from the binary itself
+```
+
+`VERSION` records both the pre-rpath and shipped addon hashes, so a rebuild on another machine can be
+compared against the published one. `tools/native/build.sh --check` in the repository runs exactly
+these assertions, plus the fused-symbol and rpath checks.
+
 ## Warning: do not mix MLX builds in one process
 
 Two different `libmlx` builds cannot coexist in a single process. macOS resolves a dynamic library by

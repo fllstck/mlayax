@@ -34,6 +34,7 @@ import {
   parseSha256Sums,
   repoFolderName,
   resolveCachedModel,
+  snapshotPathFor,
 } from "../packages/mlayax/src/hub.js";
 
 const COMMIT = "20aed815fc6acde75733882e7ec0e3f28aeb9717";
@@ -269,6 +270,37 @@ describe("parseSha256Sums", () => {
     // A wrong digest is worse than no digest: it turns a real verification failure into a confusing
     // one.
     expect(parseSha256Sums("not-a-digest  file\nshort  file\n")).toEqual([]);
+  });
+});
+
+describe("snapshotPathFor", () => {
+  const snapshot = "/cache/models--a--b/snapshots/0123";
+
+  it("places a nested path under the snapshot directory", () => {
+    expect(snapshotPathFor(snapshot, "encoder/config.json")).toBe(
+      "/cache/models--a--b/snapshots/0123/encoder/config.json",
+    );
+    // A `..` inside a *file name* is not a traversal, and rejecting it would be a bug of its own.
+    expect(snapshotPathFor(snapshot, "weights..safetensors")).toBe(
+      "/cache/models--a--b/snapshots/0123/weights..safetensors",
+    );
+  });
+
+  it("refuses a path that escapes the snapshot directory", () => {
+    // The listing is the Hub's, and a custom `endpoint` means the Hub is whoever you pointed at.
+    // `join` follows `..` without complaint, so this is checked rather than assumed.
+    for (const escaping of ["../evil.json", "a/../../evil.json", "..", "."]) {
+      expect(() => snapshotPathFor(snapshot, escaping), escaping).toThrow(/escapes the snapshot/);
+    }
+  });
+
+  it("keeps an absolute-looking entry inside the snapshot", () => {
+    // `join` — unlike `resolve` — does not let a second argument replace the first, so a repo path
+    // that starts with `/` is contained rather than an escape. Asserted because the opposite is a
+    // common assumption, and the guard's own comment says so.
+    expect(snapshotPathFor(snapshot, "/etc/passwd")).toBe(
+      "/cache/models--a--b/snapshots/0123/etc/passwd",
+    );
   });
 });
 

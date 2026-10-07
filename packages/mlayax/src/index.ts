@@ -23,7 +23,12 @@
  *   native dependency, so it imports and unit-tests anywhere, including Linux CI.
  * - **mlx** — `load()` and `predict()` over the native binding. Imports safely everywhere, but only
  *   *loads* the addon when you call into it, and fails with a described error off Apple Silicon.
- * - **service** — request batching and the HTTP server (next).
+ * - **hub** — the Hugging Face fetcher: resolve a repository id against the local cache, or download
+ *   a checkpoint into it with `loadAsync()`.
+ *
+ * There is no service layer: batching belongs to the caller, who is the only one who can see their
+ * own concurrency. The seam for it is public (`prepare` → `forwardItems` → answer shaping) so a
+ * caller who needs coalescing can build it without this package shipping a server.
  *
  * See TASKS.md at the repository root for the phase plan.
  */

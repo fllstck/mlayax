@@ -13,7 +13,7 @@ with no Python, no pyproject, no subprocess. Two packages, published manually:
 
 | package | contents | size target |
 |---|---|---|
-| `@fllstck/mlayax` | TypeScript/JS only: prompt construction, calibration, answer shaping, MLX runtime layer (vendored JS), Hugging Face fetcher, mixing guard | < 360 KB (was 300 KB — see §10.4) |
+| `@fllstck/mlayax` | TypeScript/JS only: prompt construction, calibration, answer shaping, MLX runtime layer (vendored JS), Hugging Face fetcher, mixing guard | < 300 KB (back to this, after the source maps were dropped — §10.4, §10.12) |
 | `@fllstck/mlayax-darwin-arm64` | native payload: `node_mlx.node` + `libmlx.dylib` + `libjaccl.dylib` + `mlx.metallib` + `SHA256SUMS` + `VERSION` | ≈ 64 MiB gzipped (metallib is 181 MiB raw) |
 
 ### The decision this follows (already argued; do not relitigate)
@@ -661,26 +661,48 @@ redistributing MLX ourselves, which is exactly the provenance burden mode 1 exis
       happens on the runner, on `main` or on demand rather than on a PR, so a failure there is a
       toolchain or MLX-source problem and not a regression gate for pull requests.
 
-### Phase 8 — Docs and licensing
+### Phase 8 — Docs and licensing — **DONE 2026-10-07**
 
-- [ ] `README.md`: what it is (independent port; Convai's weights), install, quickstart (prompt
+The docs are written; publishing them is Phase 9 (the tag, the release notes and the upstream offer).
+Where a document contradicts itself, the numbers here are the measured ones (§10.2, §10.12).
+
+- [x] `README.md`: what it is (independent port; Convai's weights), install, quickstart (prompt
       construction and `predict()`, with a real request and the answer shape), API reference (options
       table mirroring `load()`/`loadAsync()`/`predict()`), compatibility
-      (arm64-only, macOS ≥ 14, Node ≥ 22, Bun ≥ 1.2, MLX version pinned), performance table (§2),
-      the "don't mix MLX builds in one process" caveat, first-run download size, and the licence of
-      the weights (Apache-2.0, Convai Innovations).
-- [ ] `NOTICE`: MLX (MIT, Apple), node-mlx (MIT, frost-beta), Laya weights (Apache-2.0, Convai
+      (arm64-only, **macOS ≥ 26.2** — §10.2, not the 14 this checkbox used to say; Node ≥ 22, Bun ≥ 1.2,
+      MLX version pinned), performance table (§2), the "don't mix MLX builds in one process" caveat,
+      first-run download size, and the licence of the weights (Apache-2.0, Convai Innovations).
+      Delivered as two files, because they have two audiences: `README.md` is the repository front page
+      (what it is, the performance table, the architecture, development, the doc index), and
+      `packages/mlayax/README.md` is the page npm shows (install, quickstart with the real output,
+      the full options table, prompt construction limits, troubleshooting). The performance and
+      compatibility tables appear in both; `CONTRIBUTING.md` says they move together.
+- [x] `NOTICE`: MLX (MIT, Apple), node-mlx (MIT, frost-beta), Laya weights (Apache-2.0, Convai
       Innovations), and the statement that this is an independent port, not an official release.
-- [ ] `LICENSE`: MIT for our code.
-- [ ] `CONTRIBUTING.md`: **MLX bump playbook** — bump `deps/mlx`, re-apply the patch, use
+      *Already complete* — it landed with Phase 5, together with the licence texts and
+      `scripts/sync-licenses.mjs`. Verified rather than rewritten.
+- [x] `LICENSE`: MIT for our code. *Already present.* Both packages carry `LICENSE`, `NOTICE` and
+      `licenses/` (LICENSE is a `files` entry in each manifest, and `check:size` fails if it goes
+      missing).
+- [x] `CONTRIBUTING.md`: **MLX bump playbook** — bump `deps/mlx`, re-apply the patch, use
       `tools/native/{fix_overloads.py,shaplessprobe.ts,chainprobe.ts,bisect.ts}` to re-derive it,
-      re-run parity + bench, refresh `VERSION`/`SHA256SUMS`, regenerate bench baselines.
-- [ ] `CHANGELOG.md`: 0.1.0 with the measured numbers and the two documented retractions (fp16/fp32
-      claim, "it's the MLX version" claim) so nobody re-derives them.
-- [ ] `docs/PORTING.md` (moved) + `docs/ECOSYSTEM.md` (the survey of maintained alternatives with the
-      measured comparison — it is the justification for this fork).
-- [ ] `SECURITY.md`: scope (native code + model files), how to report, and that we never bundle
-      weights.
+      re-run parity + bench, refresh `VERSION`/`SHA256SUMS`, regenerate bench baselines. Written with a
+      table of **every** place a pin lives (nine files: `build.sh`, the workflow env, `payload.test.ts`,
+      `NOTICE`, `licenses/README.md`, `vendor/node-mlx/PATCHES.md`, `VERSION`, both READMEs), because a
+      bump that misses one is worse than no pin at all.
+- [x] `CHANGELOG.md`: 0.1.0 with the measured numbers and the two documented retractions (fp16/fp32
+      claim, "it's the MLX version" claim) so nobody re-derives them. Three retractions are recorded
+      plus the `round4` parity bug (§10.7), the source-map decision (§10.12), the two gates that could
+      not pass (§10.11), and a known-limitations section.
+- [x] `docs/PORTING.md` (moved) + `docs/ECOSYSTEM.md` (the survey of maintained alternatives with the
+      measured comparison — it is the justification for this fork). `ECOSYSTEM.md` states the four
+      conditions that would reopen the decision *before* any of them happens, so it is a rule rather
+      than a rationalisation, and lists what is worth copying (their packaging) and what is worth
+      sending upstream (the `labels` bug, the MLX build class, the FFI cost).
+- [x] `SECURITY.md`: scope (native code + model files), how to report, and that we never bundle
+      weights. Also the trust surface: no install scripts, no network at import, safetensors-is-data
+      (not a pickle), token handling, the environment variables that change load-time behaviour, and
+      the sharp edges that are not vulnerabilities. Writing it found one real hole — see §10.12.
 
 ### Phase 9 — Manual publish checklist (npm + GitHub)
 
@@ -777,6 +799,8 @@ Post-publish:
       Verified: `npm run check:licenses`, and both READMEs state arm64, macOS ≥ 26.2 and the pinned
       MLX. (The floor is 26.2, not the 14 this file used to claim — §10.2.)
 - [ ] `CHANGELOG.md`, `docs/PORTING.md`, `docs/ECOSYSTEM.md` published; patch offer sent upstream.
+      Written (Phase 8); the *published* half needs the tag, and the offer is a post-publish step of
+      Phase 9.
 
 ---
 
@@ -1202,3 +1226,59 @@ would have been worse than no script. Resolution is now two explicit steps, both
 `vendor/node-mlx/native-binding.cjs` does), then that manifest's own `exports["."].import`. A plain
 `require.resolve("@fllstck/mlayax")` cannot work here, and should not: the package is deliberately
 ESM-only.
+
+### 10.12 Phase 8: the source-map decision, three stale docstrings, and a zip-slip hole
+
+Phase 8's own brief handed over one open decision and, by asking for a security document, turned out to
+hold a second thing worth recording.
+
+**The source-map question is closed by dropping the maps from the payload.** §10.4 left it open: 113.7 KB
+of the façade's budget was `*.map`, and either turn the maps off or keep them and the bigger budget.
+The decision came from inspecting what actually ships, which neither earlier measurement had done:
+
+```jsonc
+// packages/mlayax/dist/core/answers.js.map, shipped until today
+{ "version": 3, "sources": ["../../src/core/answers.ts"], "mappings": "…" }
+//                                             ^ not in the tarball      ^ no sourcesContent
+```
+
+The `files` allowlist ships `dist/`, `vendor/`, the licences and the READMEs — not `src/`. So in the
+*installed* package every map names a file the consumer does not have, and carries no `sourcesContent`
+to fall back on: devtools show "source not found", and the only thing a map still buys is a rewritten
+stack-trace path. That is not worth a third of the package.
+
+| | before | after |
+|---|---:|---:|
+| unpacked | 350.9 KiB (72 files) | **237.5 KiB** (42 files) |
+| `*.map` | 113.4 KiB, 30 files | 0 |
+| budget | 360 KiB (98 % used at one point, §10.4) | **300 KiB**, §0's original number, 26 % headroom |
+
+The maps are still emitted for local work; only the tarball changed (`"!dist/**/*.map"` in `files`).
+`check-size.mjs` grew a `forbid` rule so the decision is enforced rather than described: a map that
+reappears in the payload fails the gate with the reason, and the budget returns to 360 KiB only
+together with shipping `src/`. The real lesson is §10.4's, restated: the budget was never the problem,
+the payload contents were.
+
+**Three docstrings still promised a service layer.** Dropping the service (Phase 4) left `src/index.ts`
+saying "**service** — request batching and the HTTP server (next)", `src/core/index.ts` pointing at
+`../service`, and two comments in `agent.ts` explaining a default by appeal to "the batching service
+path". Two of those ship: `index.ts`'s is the package's own doc comment, and one of `agent.ts`'s is on
+`LoadOptions.tidy`, which is consumer-visible in the emitted `.d.ts`. All corrected. They survived four
+phases of "docs are done" because nothing tests prose — which is the argument for the shipped-JSDoc
+half of the API reference in Phase 8.
+
+**A path from the Hub's tree listing was written without checking where it landed.** Writing
+`SECURITY.md` meant asking what the fetcher trusts, and the answer was "the listing":
+`join(snapshotDir, entry.path)`, with `entry.path` straight from `GET /api/models/{repo}/tree`. `join`
+follows `..`, so a listing containing `../../../.ssh/authorized_keys` would have written and symlinked
+outside the cache — the zip-slip class. The listing over TLS is as trustworthy as `huggingface.co`, but
+`endpoint` exists so a mirror or proxy can answer instead, and the guard should not depend on which one
+did. `snapshotPathFor` now re-checks the joined path against the snapshot directory and refuses an
+escape, with tests for the escaping forms and for the two shapes that must still pass (a nested path,
+and `weights..safetensors`).
+
+One correction from writing that guard, because it is the opposite of the common assumption:
+`path.join("/snap/0123", "/etc/passwd")` is `/snap/0123/etc/passwd`, *not* `/etc/passwd` — that is
+`resolve`. So an absolute-looking repo path is contained rather than an escape, and the guard's comment
+says so instead of implying a rule it does not need. The first version of the test asserted the wrong
+behaviour and failed, which is how it was noticed.

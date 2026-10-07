@@ -44,7 +44,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
@@ -171,6 +171,33 @@ export function repoFolderName(repoId: string): string {
     throw new Error(`Invalid repository id ${JSON.stringify(repoId)}: it may not contain ".."`);
   }
   return `models--${parts[0]}--${parts[1]}`;
+}
+
+/**
+ * The path a file from the repo's tree listing is written to, inside the snapshot directory.
+ *
+ * The same shape as `repoFolderName`'s check, for a different hazard: `join` follows `..`, so a
+ * tree entry whose path escapes the snapshot would write (and symlink) outside the cache — the
+ * "zip slip" class. The listing normally comes from `huggingface.co` over TLS and can be trusted,
+ * but `endpoint` exists so a mirror or a proxy can be used instead, and that is a listing we did
+ * not make. Rejecting here means the guard does not depend on which endpoint answered.
+ *
+ * Absolute paths are *not* a separate case: `join` does not treat its second argument as absolute
+ * (that is `resolve`), so `/etc/passwd` lands under the snapshot as `snapshots/<commit>/etc/passwd`.
+ * The cross-volume case is the reason the joined result is re-checked with `isAbsolute` rather than
+ * trusting `relative`. A `..` *inside* a file name (`weights..safetensors`) is fine and passes —
+ * only a path that leaves the directory is a problem.
+ */
+export function snapshotPathFor(snapshotDir: string, entryPath: string): string {
+  const target = join(snapshotDir, entryPath);
+  const inside = relative(snapshotDir, target);
+  if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) {
+    throw new Error(
+      `Refusing a repository path that escapes the snapshot directory: ${JSON.stringify(entryPath)} ` +
+        `resolves to ${JSON.stringify(target)}, outside ${JSON.stringify(snapshotDir)}.`,
+    );
+  }
+  return target;
 }
 
 /**
@@ -604,7 +631,7 @@ async function downloadFile(
   const blobName =
     entry.lfs?.oid ?? entry.oid ?? createHash("sha1").update(entry.path).digest("hex");
   const blobPath = join(repoDir, "blobs", blobName);
-  const target = join(snapshotDir, entry.path);
+  const target = snapshotPathFor(snapshotDir, entry.path);
 
   mkdirSync(dirname(blobPath), { recursive: true });
   mkdirSync(dirname(target), { recursive: true });

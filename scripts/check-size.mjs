@@ -15,20 +15,22 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-/** @type {{ dir: string, name: string, budgetBytes: number, kind: "unpacked" | "tarball", allow: RegExp[] }[]} */
+/** @type {{ dir: string, name: string, budgetBytes: number, kind: "unpacked" | "tarball", allow: RegExp[], forbid?: { pattern: RegExp, why: string }[] }[]} */
 const TARGETS = [
   {
     dir: "packages/mlayax",
     name: "@fllstck/mlayax",
-    // TASKS.md §0 said "< 300 KB"; §10.4 records why that was already exhausted at 295.3 KiB before
-    // the mixing guard landed, and what would buy back the margin (114 KB of it is source maps).
+    // §0 said "< 300 KB"; §10.4 records the history — two raises, both caused by comments, and the
+    // diagnosis that the budget was in effect a cap on how much the code is explained.
     //
-    // Raised twice now, both times because of comments: ~44 KiB for the mixing guard, then 4.5 KiB for
-    // the §8 hazard fixes. Comments are preserved verbatim into dist/, so this budget is in effect a
-    // cap on how much the code is explained — see §10.4 for the measurement and for the one lever
-    // that matters (dropping 114 KB of source maps). Headroom is deliberate; the number is a sanity
-    // check against dead weight, not a target to sit just under.
-    budgetBytes: 360 * 1024,
+    // Resolved 2026-10-07 (Phase 8) by removing the cause rather than the cap: 113.4 KiB of that
+    // budget was `*.map` files, and in the *installed* package they resolve to nothing. They carry
+    // no `sourcesContent`, and their `sources` point at `../../src/**` — which the `files` allowlist
+    // does not ship. So the payload is now 237.5 KiB and the budget is §0's 300 KiB again, with 62
+    // KiB of real headroom (§10.12). To reverse: drop `"!dist/**/*.map"` from the package's `files`
+    // and raise this back to 360 KiB — but only together with actually shipping the sources, or the
+    // maps stay dead weight.
+    budgetBytes: 300 * 1024,
     kind: "unpacked",
     allow: [
       /^package\.json$/,
@@ -38,6 +40,15 @@ const TARGETS = [
       /^licenses\//,
       /^dist\//,
       /^vendor\//,
+    ],
+    forbid: [
+      {
+        pattern: /\.map$/,
+        why:
+          "source maps are emitted for local use but not published: their `sources` point at " +
+          "`src/**`, which the tarball does not contain, and they carry no `sourcesContent`, so a " +
+          "consumer cannot resolve them (TASKS.md §10.12)",
+      },
     ],
   },
   {
@@ -87,7 +98,17 @@ for (const target of TARGETS) {
     .map((f) => f.path)
     .filter((p) => !target.allow.some((re) => re.test(p)));
 
-  const status = over || unexpected.length > 0 ? "FAIL" : "ok  ";
+  // `allow` catches files nobody meant to ship. `forbid` catches files that were removed on purpose
+  // and drifted back in — a decision nothing else would notice, since the budget alone would absorb
+  // them silently.
+  const forbidden = [];
+  for (const rule of target.forbid ?? []) {
+    for (const file of entry.files) {
+      if (rule.pattern.test(file.path)) forbidden.push({ path: file.path, why: rule.why });
+    }
+  }
+
+  const status = over || unexpected.length > 0 || forbidden.length > 0 ? "FAIL" : "ok  ";
   console.log(
     `${status} ${target.name.padEnd(32)} ${human(measured)} / ${human(target.budgetBytes)} ` +
       `(${entry.entryCount} files, ${target.kind})`,
@@ -99,6 +120,13 @@ for (const target of TARGETS) {
   }
   for (const p of unexpected) {
     console.error(`     unexpected file: ${p}`);
+    failed = true;
+  }
+  if (forbidden.length > 0) {
+    console.error(
+      `     forbidden: ${forbidden.length} file(s) starting with ${forbidden[0].path}\n` +
+        `       ${forbidden[0].why}`,
+    );
     failed = true;
   }
 }
