@@ -263,7 +263,7 @@ describe("round4", () => {
   });
 
   it("is not the naive scaled-round, which disagrees with Python near ties", () => {
-    // Pin the two failure modes the old formulation had, so a future refactor cannot quietly
+    // Pin the failure modes the old formulation had, so a future refactor cannot quietly
     // reintroduce them.
     const naiveScaledRound = (x: number) => Math.round(x * 1e4) / 1e4;
     expect(naiveScaledRound(0.00005)).toBe(0.0001);
@@ -271,6 +271,76 @@ describe("round4", () => {
     expect(naiveScaledRound(1.00005)).toBe(1.0001);
     // The tolerance-based version snapped this to the half and rounded to even, giving 0.
     expect(round4(0.00005)).not.toBe(0);
+  });
+
+  describe("hazard 10: exact ties round half to even, as Python does", () => {
+    // `Number(x.toFixed(4))` rounds the exact double with ties **away from zero**; CPython's
+    // `round(x, 4)` rounds ties **to even**. They agree everywhere except at a true tie, which is why
+    // this went unnoticed: the values that separate them are 0.03125, 0.15625, 0.28125 — small
+    // probabilities, which is exactly what an answer's confidence is.
+    //
+    // A tie at 4 decimals is `(2k+1)/20000`. That is dyadic — and so representable as a double —
+    // exactly when it is an odd multiple of `1/32`. There are infinitely many of them; this is the
+    // first eight either side of zero.
+    const ties: [number, number][] = [
+      [0.03125, 0.0312],
+      [0.09375, 0.0938],
+      [0.15625, 0.1562],
+      [0.21875, 0.2188],
+      [0.28125, 0.2812],
+      [0.34375, 0.3438],
+      [0.40625, 0.4062],
+      [0.46875, 0.4688],
+      [-0.03125, -0.0312],
+      [-0.09375, -0.0938],
+      [-0.15625, -0.1562],
+      [0.53125, 0.5312],
+      [1.03125, 1.0312],
+      [1.09375, 1.0938],
+      [2.15625, 2.1562],
+    ];
+
+    it("matches CPython on every exact tie in the 1/32 family", () => {
+      // Expectations generated with CPython's `round(x, 4)`, not hand-derived.
+      for (const [value, expected] of ties) {
+        expect(round4(value), `round4(${value})`).toBe(expected);
+      }
+    });
+
+    it("is a real divergence, not a hypothetical one", () => {
+      // Assert the old behaviour explicitly. If someone replaces the tie handling with `toFixed`
+      // again because "ties are unreachable", this is the test that says otherwise.
+      const toFixed = (x: number) => Number(x.toFixed(4));
+      expect(toFixed(0.03125)).toBe(0.0313); // away from zero
+      expect(round4(0.03125)).toBe(0.0312); // to even
+      expect(toFixed(0.15625)).not.toBe(round4(0.15625));
+      // And where the even neighbour happens to be the upper one, the two agree — which is why a
+      // sparse sample of "near ties" would not have caught this.
+      expect(toFixed(0.09375)).toBe(round4(0.09375));
+    });
+
+    it("detects ties exactly, so a value one ulp off a tie is not treated as one", () => {
+      // The other failure direction: a tolerance-based tie detector snaps near-ties to the half.
+      const tie = 0.03125;
+      const above = tie + Number.EPSILON * tie;
+      const below = tie - Number.EPSILON * tie;
+      expect(above).not.toBe(tie);
+      expect(round4(above)).toBe(0.0313);
+      expect(round4(below)).toBe(0.0312);
+      expect(round4(tie)).toBe(0.0312);
+    });
+
+    it("would matter much more at fewer decimals, which is why the fix is specific", () => {
+      // At 4 decimals only the 1/32 family is reachable as a tie. At 0 decimals ties are everywhere
+      // (every half-integer), so `toFixed(0)` and Python's `round()` disagree constantly — evidence
+      // that this is a property of the decimal count, not of JavaScript being "wrong".
+      const disagree = [0.5, 2.5, -0.5, -2.5].filter(
+        (v) => Number(v.toFixed(0)) !== Math.round(v * 2) / 2,
+      );
+      expect(disagree).toEqual([0.5, 2.5, -0.5, -2.5]);
+      // CPython: round(0.5) = 0, round(2.5) = 2, round(-0.5) = 0, round(-2.5) = -2.
+      expect([0.5, 2.5, -0.5, -2.5].map((v) => Number(v.toFixed(0)))).toEqual([1, 3, -1, -3]);
+    });
   });
 
   it("preserves signed zero, as Python's round does", () => {

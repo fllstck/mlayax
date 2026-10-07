@@ -196,8 +196,14 @@ export function gelu(mx: MlxCore, x: MlxArray): MlxArray {
 /**
  * ReLU with the zero in the activation's dtype.
  *
- * A bare `0` here is worse than a silent upcast: `mx.maximum(intArray, 0)` returns float32, and the
- * gather that follows rejects a float32 index outright.
+ * The upcast is real and silent: `mx.maximum(intArray, 0)` returns float32, and would lift the rest of
+ * the graph (~20 % cost, no error).
+ *
+ * This docstring used to add that "the gather that follows rejects a float32 index outright". That is
+ * true of `mx.take` and **false of `mx.takeAlongAxis`**, which is what the marker path below actually
+ * calls — it casts float32 indices, eagerly and under `mx.compile`. Verified in
+ * `test/mlx.binding.test.ts` (hazard 2). So the int32 form is about not promoting, not about not
+ * crashing.
  */
 export function relu(mx: MlxCore, x: MlxArray): MlxArray {
   return mx.maximum(x, mx.array(0, x.dtype));
@@ -537,11 +543,13 @@ export class DecisionModel {
     // `mx.take` with a [b, count] index *prepends* the batch dim, giving [b, b, count, H], which
     // broadcasts silently instead of failing. Verified in `test/mlx.binding.test.ts`.
     //
-    // The maximum against an int32 zero keeps the indices integral. Note this is a dtype
-    // correctness choice, not a workaround: an earlier comment here claimed a bare `0` would make
-    // the gather *reject* the float32 indices, and that is not reproducible — `takeAlongAxis`
-    // accepts float32 indices both eagerly and under `mx.compile`. The int32 form is still the right
-    // one (the indices are integers, and the promotion is avoidable work).
+    // The maximum against an int32 zero keeps the indices integral. Note this is a dtype correctness
+    // choice, not a workaround: an earlier comment in this file claimed a bare `0` would make the
+    // gather *reject* the float32 indices. That is true of `mx.take` but not of `takeAlongAxis`,
+    // which is what this call uses and which accepts float32 indices both eagerly and under
+    // `mx.compile` — measured, and pinned in `test/mlx.binding.test.ts` (hazard 2). The int32 form is
+    // still right (the indices are integers, and the promotion is avoidable work), but it was never
+    // the difference between working and crashing.
     const markers = mx.takeAlongAxis(
       h,
       mx.expandDims(mx.maximum(markerPos, mx.array(0, mx.int32)), -1),

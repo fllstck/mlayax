@@ -250,6 +250,59 @@ describe.skipIf(!nativeAvailable())("MLX invariants the runtime depends on", () 
     });
   });
 
+  describe("hazard 2: which op actually rejects a float32 index", () => {
+    // `mx.maximum(intArray, 0)` returns float32 — that part of the hazard is real, and the dtype
+    // test for it lives in the hazard-1 block above. What this block settles is the *consequence*,
+    // because `model.ts` claimed for a long time that "the gather that follows rejects a float32
+    // index outright". Half true, and the half that is false is the half that mattered:
+    //
+    //   mx.take            -> THROWS  "Indices must be integral"   (the hazard, verified below)
+    //   mx.takeAlongAxis   -> casts, eagerly and under mx.compile   (what the marker path uses)
+    //
+    // So the marker gather was never at risk of failing. The int32 form is still correct — the
+    // indices are integers and the promotion is avoidable work — but it is a dtype choice, not a
+    // workaround, and the difference matters when someone next reads that comment deciding whether
+    // they can relax it.
+
+    const hidden = (): MlxArray =>
+      mx()
+        .array(
+          Array.from({ length: 2 * 5 * 3 }, (_, i) => i),
+          mx().float32,
+        )
+        .reshape([2, 5, 3]);
+    const intIndices = (): MlxArray => mx().array([1, 3, 0, 2], mx().int32).reshape([2, 2]);
+
+    it("mx.take rejects float32 indices, which is the real hazard", () => {
+      const floatIndices = mx().maximum(intIndices(), 0);
+      expect(dtypeName(floatIndices.dtype)).toBe("float32");
+      expect(() => mx().take(hidden(), floatIndices, 1)).toThrow(/Indices must be integral/);
+      // And the int32 form is accepted, so the rejection is about the dtype and not the call shape.
+      expect(mx().take(hidden(), intIndices(), 1).shape).toEqual([2, 2, 2, 3]);
+    });
+
+    it("mx.takeAlongAxis accepts float32 indices, which is why the marker path never broke", () => {
+      const floatIndices = mx().maximum(intIndices(), 0);
+      const out = mx().takeAlongAxis(hidden(), mx().expandDims(floatIndices, -1), 1);
+      expect(out.shape).toEqual([2, 2, 3]);
+      // Same under compile, so the specialised profile is not a second chance to fail.
+      const compiled = mx().compile((h: MlxArray, p: MlxArray) =>
+        mx().takeAlongAxis(h, mx().expandDims(mx().maximum(p, 0), -1), 1),
+      );
+      const compiledOut = compiled(hidden(), intIndices());
+      expect(compiledOut.shape).toEqual([2, 2, 3]);
+    });
+
+    it("keeps the indices integral anyway, because the promotion is wasted work", () => {
+      // The expression `model.ts` builds, asserted at the dtype level: marker positions clamped
+      // against an int32 zero stay int32, so nothing downstream is promoted to float32.
+      const intClamped = mx().maximum(intIndices(), mx().array(0, mx().int32));
+      expect(dtypeName(intClamped.dtype)).toBe("int32");
+      const floatClamped = mx().maximum(intIndices(), 0);
+      expect(dtypeName(floatClamped.dtype)).toBe("float32");
+    });
+  });
+
   describe("hazard 6: shape-inference boundary", () => {
     it("a compiled gather matches eagerly, for both index dtypes", () => {
       const core = mx();

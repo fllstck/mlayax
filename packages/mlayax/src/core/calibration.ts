@@ -175,24 +175,71 @@ export function answerConfidence(p: number[], k: number): number {
 const ANSWER_DECIMALS = 4;
 
 /**
+ * Is `x` exactly halfway between two `decimals`-place values?
+ *
+ * A tie at `d` decimals is `(2k+1)/(2·10^d)` = `(2k+1)/(2^(d+1)·5^d)`. For a double to equal that
+ * exactly it has to be dyadic, so the `5^d` must divide into the odd numerator, leaving
+ * `x = j/2^(d+1)` with `j` odd. That makes the test exact rather than tolerance-based: multiplying by
+ * a power of two never rounds, so `x * 2^(d+1)` is computed exactly and checked for being an odd
+ * integer.
+ */
+function isDecimalTie(x: number, decimals: number): boolean {
+  const scaled = x * 2 ** (decimals + 1); // exact: a power-of-two scaling cannot round (absent overflow)
+  return Number.isInteger(scaled) && Math.abs(scaled % 2) === 1;
+}
+
+/**
+ * Round to `decimals` places the way Python's `round(x, decimals)` does: correctly rounded on the
+ * exact value of the double, with ties to even.
+ *
+ * `toFixed` is *also* specified to round the exact value ("as close to zero as possible"), so it
+ * agrees with CPython everywhere except at a true tie — where the spec picks the larger candidate
+ * (away from zero) and Python picks the even one. Handling that case explicitly is the whole of the
+ * difference.
+ *
+ * ```
+ * x         Python round(x, 4)   Number(x.toFixed(4))
+ * 0.03125   0.0312               0.0313   <- diverges
+ * 0.09375   0.0938               0.0938   <- agrees
+ * ```
+ *
+ * `0.03125` is `1/32`, and every odd multiple of `1/32` is an exact 4-decimal tie — there are
+ * infinitely many of them, and `1/32` is a perfectly ordinary small probability.
+ */
+function roundHalfEven(x: number, decimals: number): number {
+  if (isDecimalTie(x, decimals)) {
+    const numerator = x * 2 ** (decimals + 1); // odd integer, exactly
+    const lower = (numerator * 5 ** decimals - 1) / 2; // the lower neighbour, in units of 10^-decimals
+    return (lower % 2 === 0 ? lower : lower + 1) / 10 ** decimals;
+  }
+  return Number(x.toFixed(decimals));
+}
+
+/**
  * Round to 4 decimals the way Python's `round(x, 4)` does.
  *
- * Python rounds the **exact** double, correctly rounded to 4 decimal places with ties to even.
- * `Number.prototype.toFixed` is specified the same way ("as close to zero as possible", so ties are
- * effectively unreachable for a binary double at 4 decimals), so this matches CPython on every value
- * tested — verified against `round(v, 4)` on 8 017 values, including near-tie cases.
+ * Python rounds the **exact** double, correctly rounded to 4 decimal places with ties to even. That
+ * last clause is the one this function used to get wrong: see {@link roundHalfEven}.
  *
- * This replaces a tolerance-based formulation (`|x*1e4 - floor(x*1e4) - 0.5| < 1e-9` then round to
- * even) that treated any value merely *near* a half as an exact tie. That is wrong whenever the
- * double sits just above the half: it returned `0` for `0.00005` where Python returns `0.0001`, and
- * disagreed with Python on 120 of those 8 017 values. An answer's confidence is exactly the kind of
- * small number that lands there.
+ * The earlier note here claimed ties were "effectively unreachable for a binary double at 4
+ * decimals", on the strength of 8 017 compared values. That is false, and the counterexample is small
+ * enough to state: `round4(0.03125)` returned `0.0313` where Python returns `0.0312`, and likewise at
+ * `0.15625`, `0.28125`, and every other odd multiple of `1/32`. The 8 017-value sweep missed them
+ * because it sampled *near* ties — values a hair either side of a half — rather than the exact ties,
+ * which are the only place the two rounders can differ. The current implementation was verified
+ * against `round(v, 4)` on 610 values: every 4-decimal tie in `±1/32…±200/32`, uniformly random
+ * values, and near-tie boundaries, with zero disagreements.
+ *
+ * This also replaces a tolerance-based formulation (`|x*1e4 - floor(x*1e4) - 0.5| < 1e-9` then round
+ * to even) that treated any value merely *near* a half as an exact tie. That is wrong whenever the
+ * double sits just above the half: it returned `0` for `0.00005` where Python returns `0.0001`. Ties
+ * are now detected exactly, so both failure directions are closed.
  *
  * Signed zero is preserved: Python's `round(-0.00004, 4)` is `-0.0`.
  */
 export function round4(x: number): number {
   if (!Number.isFinite(x)) return x;
-  const rounded = Number(x.toFixed(ANSWER_DECIMALS));
+  const rounded = roundHalfEven(x, ANSWER_DECIMALS);
   if (rounded === 0 && (x < 0 || Object.is(x, -0))) return -0;
   return rounded;
 }

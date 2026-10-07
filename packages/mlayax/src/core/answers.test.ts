@@ -6,6 +6,75 @@ import type { PrefixStats } from "./sequence.js";
 const choice = (criteria: string[]) =>
   toInternal({ type: "choice", instructions: "Which team?", criteria });
 
+describe("the published payload, as a consumer receives it", () => {
+  // §6 asks for the JSON-schema shape of the answer payload, and for `answer_confidence`
+  // specifically. The reason is a real divergence between implementations: upstream `laya_mlx` emits
+  // `answer_confidence`, and the `@johnhenry` port omits it. It is one line of code to drop and no
+  // existing test would miss it, so it is asserted on every answer type by name.
+
+  const allThree = () => [
+    shapeAnswer(choice(["billing", "technical", "sales"]), [0.9585, 0.0227, 0.0186], 0.5),
+    shapeAnswer(
+      toInternal({ type: "score", instructions: "How urgent?", criteria: ["low", "mid", "high"] }),
+      [0.1534, 0.3343, 0.5123],
+      0.25,
+    ),
+    shapeAnswer(toInternal({ type: "noul", instructions: "Money back?" }), [0.1781, 0.8219], 0.5),
+  ];
+
+  it("carries answer_confidence on every answer type", () => {
+    const answers = allThree();
+    expect(answers.map((a) => a.type)).toEqual(["choice", "score", "noul"]);
+    for (const answer of answers) {
+      expect(answer, answer.type).toHaveProperty("answer_confidence");
+      expect(typeof answer.answer_confidence, answer.type).toBe("number");
+    }
+  });
+
+  it("is plain JSON: no NaN, no Infinity, nothing that serialises to null", () => {
+    // The trap this closes: `JSON.stringify(NaN)` is `null`, so a non-finite number in a field does
+    // not throw and does not look wrong in TypeScript — it arrives at the caller as `null`, and the
+    // consumer's schema check fails somewhere else entirely.
+    for (const answer of allThree()) {
+      const json = JSON.parse(JSON.stringify(answer)) as Record<string, unknown>;
+      expect(Object.keys(json), answer.type).toEqual(Object.keys(answer));
+      for (const [key, value] of Object.entries(json)) {
+        expect(value, `${answer.type}.${key}`).not.toBeNull();
+      }
+      expect(JSON.stringify(answer)).not.toContain("null");
+    }
+  });
+
+  it("keeps every published number finite and four-decimal", () => {
+    // `confidence`, `answer_confidence`, the probabilities and the derived score/action are all
+    // published. Any of them can be the one that ends up `null` in the payload above.
+    const numbers = (value: unknown): number[] => {
+      if (typeof value === "number") return [value];
+      if (value !== null && typeof value === "object") {
+        return Object.values(value as Record<string, unknown>).flatMap(numbers);
+      }
+      return [];
+    };
+    for (const answer of allThree()) {
+      for (const n of numbers(answer)) {
+        expect(Number.isFinite(n), `${answer.type}: ${n}`).toBe(true);
+        // Four decimals, so at most four fractional digits once serialised.
+        const fraction = String(n).split(".")[1] ?? "";
+        expect(fraction.length, `${answer.type}: ${n}`).toBeLessThanOrEqual(4);
+      }
+    }
+  });
+
+  it("keeps {billing, technical, sales} as the choice probabilities, keyed by label", () => {
+    const answer = shapeAnswer(choice(["billing", "technical", "sales"]), [0.5, 0.25, 0.25], 1);
+    expect(Object.keys(answer.type === "choice" ? answer.probabilities : {})).toEqual([
+      "billing",
+      "technical",
+      "sales",
+    ]);
+  });
+});
+
 describe("shapeAnswer", () => {
   it("shapes a choice answer with the winning label and per-label probabilities", () => {
     const answer = shapeAnswer(
