@@ -62,6 +62,27 @@ function distAvailable(): boolean {
 const PAYLOAD = nativeAvailable();
 const CAN_SPAWN = PAYLOAD && distAvailable();
 
+/**
+ * Whether the runtime running *this* file can enumerate its resident images.
+ *
+ * The probe runs under `process.execPath` — the same runtime as the harness — and the collision tests
+ * below rest entirely on `process.report.getReport().sharedObjects`: before the guard can be accused
+ * of anything, the foreign library has to be *proven* resident. On a runtime that cannot enumerate
+ * images, the guard cannot see a foreign library either, so these tests are skipped rather than
+ * weakened; that behaviour is asserted in its own `describe` at the bottom of this file.
+ *
+ * The check is measured, not `typeof process.report?.getReport === "function"`. Bun has that method
+ * and returns a `sharedObjects` array that is *always empty* — a runtime that answers the question is
+ * not the same as one that answers it truthfully (TASKS.md §10.11). Every process has Node's own
+ * shared libraries resident, so a working enumerator has something to report.
+ */
+const CAN_ENUMERATE_IMAGES = (() => {
+  const report = (
+    process.report as { getReport?: () => { sharedObjects?: string[] } } | undefined
+  )?.getReport?.();
+  return (report?.sharedObjects?.length ?? 0) > 0;
+})();
+
 /** The directory our payload's libraries live in, which the guard treats as "ours". */
 function libDir(): string {
   return path.dirname(resolveNativeAddonPath());
@@ -184,94 +205,129 @@ describe.skipIf(!PAYLOAD)(
   },
 );
 
-describe.skipIf(!CAN_SPAWN)("a foreign libmlx is stopped before dyld binds it", () => {
-  it("rejects a different-build copy of our own library, and names it", () => {
-    if (foreignCopy === null) return; // install_name_tool/codesign unavailable
-    const result = probe(foreignCopy);
+describe.skipIf(!CAN_SPAWN || !CAN_ENUMERATE_IMAGES)(
+  "a foreign libmlx is stopped before dyld binds it",
+  () => {
+    it("rejects a different-build copy of our own library, and names it", () => {
+      if (foreignCopy === null) return; // install_name_tool/codesign unavailable
+      const result = probe(foreignCopy);
 
-    expect(result.outcome).toBe("threw");
-    expect(result.name).toBe("MlxMixingError");
-    expect(result.message).toContain(path.join(foreignCopy, "libmlx.dylib"));
-    expect(result.message).toContain(libDir());
-    // The point of the guard: no mangled dyld symbol reaches the user as the headline.
-    expect(result.message).not.toMatch(/^dlopen\(/);
-  });
-
-  it("is stopping a real breakage, not being pedantic", () => {
-    // With the guard waived, dyld binds this copy happily — its symbols are ours. MLX then fails
-    // anyway, with "Failed to load the default metallib", because MLX resolves `mlx.metallib`
-    // relative to the library that won. So a resident foreign build breaks MLX in two separate ways,
-    // and only one of them looks like a symbol problem.
-    if (foreignCopy === null) return;
-    const result = probe(foreignCopy, { MLAYAX_ALLOW_MIXED_MLX: "1" });
-
-    expect(result.outcome).toBe("threw");
-    expect(result.message).toMatch(/metallib/i);
-    // And it is not our guard doing the throwing — the escape hatch was honoured.
-    expect(result.name).not.toBe("MlxMixingError");
-  });
-
-  it("leaves an unrelated load failure alone", () => {
-    // A child with a broken dist entry must not be blamed on library mixing.
-    const stdout = execFileSync(
-      process.execPath,
-      [PROBE, libDir(), path.join(repoRoot, "packages", "mlayax", "dist", "mlx", "nope.js")],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    );
-    const result = JSON.parse(stdout) as ProbeResult;
-    expect(result.outcome).toBe("threw");
-    expect(result.message).toMatch(/Cannot find module|ERR_MODULE_NOT_FOUND/);
-    expect(result.message).not.toMatch(/mixed|libmlx\.dylib is already resident/);
-  });
-});
-
-describe.skipIf(!CAN_SPAWN || thirdParty === null)("a real third-party MLX build", () => {
-  /**
-   * Which half of the guard is expected to act depends on the library's own install name, so the
-   * test reads it instead of assuming. Homebrew's bottle calls itself
-   * `/opt/homebrew/opt/mlx/lib/libmlx.dylib`, which our addon's request for `@rpath/libmlx.dylib`
-   * cannot match — it therefore loads as a second, separate copy and MLX still resolves ours. Only a
-   * build that names itself `@rpath/libmlx.dylib` can take the slot, and that is the fatal case.
-   */
-  const thirdPartyInstallName = (): string | null => {
-    if (thirdParty === null) return null;
-    try {
-      return readInstallName(readFileSync(path.join(thirdParty, "libmlx.dylib")));
-    } catch {
-      return null;
-    }
-  };
-
-  it("is handled according to whether it can actually be matched", () => {
-    if (thirdParty === null) return;
-    const installName = thirdPartyInstallName();
-    const result = probe(thirdParty);
-
-    // Confirms the fixture genuinely became resident — otherwise this test would pass on a process
-    // where nothing collided and would prove nothing.
-    expect(result.residentCount).toBeGreaterThan(0);
-    expect(result.residentBeforeLoad.length).toBeGreaterThan(0);
-
-    if (installName === "@rpath/libmlx.dylib") {
-      // The measured crash: dyld binds the wrong build and dies on a symbol mismatch.
       expect(result.outcome).toBe("threw");
       expect(result.name).toBe("MlxMixingError");
-      expect(result.message).toContain(thirdParty);
-      expect(result.message).toMatch(/Symbol not found|symbol not found|could not be bound/);
-    } else {
-      // Cannot shadow: our addon keeps its own copy, MLX works, and the user gets a note.
-      expect(result.outcome).toBe("loaded");
-      expect(result.warnings.join("\n")).toMatch(/cannot shadow/);
-      expect(result.warnings.join("\n")).toContain(thirdParty);
-      expect(result.message).toMatch(/^sum=6$/);
-    }
-  });
+      expect(result.message).toContain(path.join(foreignCopy, "libmlx.dylib"));
+      expect(result.message).toContain(libDir());
+      // The point of the guard: no mangled dyld symbol reaches the user as the headline.
+      expect(result.message).not.toMatch(/^dlopen\(/);
+    });
 
-  it("reports the install name it measured, so the branch above is not a guess", () => {
-    if (thirdParty === null) return;
-    // `null` is allowed (an image we cannot parse) and is treated as shadowing, which the branch
-    // above then requires to throw. Either way the decision is grounded in a real read.
-    const installName = thirdPartyInstallName();
-    expect(installName === null || typeof installName === "string").toBe(true);
-  });
-});
+    it("is stopping a real breakage, not being pedantic", () => {
+      // With the guard waived, dyld binds this copy happily — its symbols are ours. MLX then fails
+      // anyway, with "Failed to load the default metallib", because MLX resolves `mlx.metallib`
+      // relative to the library that won. So a resident foreign build breaks MLX in two separate ways,
+      // and only one of them looks like a symbol problem.
+      if (foreignCopy === null) return;
+      const result = probe(foreignCopy, { MLAYAX_ALLOW_MIXED_MLX: "1" });
+
+      expect(result.outcome).toBe("threw");
+      expect(result.message).toMatch(/metallib/i);
+      // And it is not our guard doing the throwing — the escape hatch was honoured.
+      expect(result.name).not.toBe("MlxMixingError");
+    });
+
+    it("leaves an unrelated load failure alone", () => {
+      // A child with a broken dist entry must not be blamed on library mixing.
+      const stdout = execFileSync(
+        process.execPath,
+        [PROBE, libDir(), path.join(repoRoot, "packages", "mlayax", "dist", "mlx", "nope.js")],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const result = JSON.parse(stdout) as ProbeResult;
+      expect(result.outcome).toBe("threw");
+      expect(result.message).toMatch(/Cannot find module|ERR_MODULE_NOT_FOUND/);
+      expect(result.message).not.toMatch(/mixed|libmlx\.dylib is already resident/);
+    });
+  },
+);
+
+describe.skipIf(!CAN_SPAWN || !CAN_ENUMERATE_IMAGES || thirdParty === null)(
+  "a real third-party MLX build",
+  () => {
+    /**
+     * Which half of the guard is expected to act depends on the library's own install name, so the
+     * test reads it instead of assuming. Homebrew's bottle calls itself
+     * `/opt/homebrew/opt/mlx/lib/libmlx.dylib`, which our addon's request for `@rpath/libmlx.dylib`
+     * cannot match — it therefore loads as a second, separate copy and MLX still resolves ours. Only a
+     * build that names itself `@rpath/libmlx.dylib` can take the slot, and that is the fatal case.
+     */
+    const thirdPartyInstallName = (): string | null => {
+      if (thirdParty === null) return null;
+      try {
+        return readInstallName(readFileSync(path.join(thirdParty, "libmlx.dylib")));
+      } catch {
+        return null;
+      }
+    };
+
+    it("is handled according to whether it can actually be matched", () => {
+      if (thirdParty === null) return;
+      const installName = thirdPartyInstallName();
+      const result = probe(thirdParty);
+
+      // Confirms the fixture genuinely became resident — otherwise this test would pass on a process
+      // where nothing collided and would prove nothing.
+      expect(result.residentCount).toBeGreaterThan(0);
+      expect(result.residentBeforeLoad.length).toBeGreaterThan(0);
+
+      if (installName === "@rpath/libmlx.dylib") {
+        // The measured crash: dyld binds the wrong build and dies on a symbol mismatch.
+        expect(result.outcome).toBe("threw");
+        expect(result.name).toBe("MlxMixingError");
+        expect(result.message).toContain(thirdParty);
+        expect(result.message).toMatch(/Symbol not found|symbol not found|could not be bound/);
+      } else {
+        // Cannot shadow: our addon keeps its own copy, MLX works, and the user gets a note.
+        expect(result.outcome).toBe("loaded");
+        expect(result.warnings.join("\n")).toMatch(/cannot shadow/);
+        expect(result.warnings.join("\n")).toContain(thirdParty);
+        expect(result.message).toMatch(/^sum=6$/);
+      }
+    });
+
+    it("reports the install name it measured, so the branch above is not a guess", () => {
+      if (thirdParty === null) return;
+      // `null` is allowed (an image we cannot parse) and is treated as shadowing, which the branch
+      // above then requires to throw. Either way the decision is grounded in a real read.
+      const installName = thirdPartyInstallName();
+      expect(installName === null || typeof installName === "string").toBe(true);
+    });
+  },
+);
+
+/**
+ * The degradation, asserted rather than assumed — this is the Bun half.
+ *
+ * `mixing.ts`'s policy is unit-tested in the abstract and `binding.ts` describes the Bun path in
+ * prose, but this is the end-to-end claim: on a runtime that cannot enumerate its images, the guard
+ * must not report that it saw something it cannot see. Whatever goes wrong next is dyld's or MLX's
+ * error (`describeMlxLoadFailure` explains it), never a `MlxMixingError` we invented.
+ *
+ * Skipped on Node, where the tests above do the real work.
+ */
+describe.skipIf(!CAN_SPAWN || CAN_ENUMERATE_IMAGES)(
+  "a runtime with no image list does not get a fabricated guard",
+  () => {
+    it("cannot see the resident foreign library, and says so instead of guessing", () => {
+      if (foreignCopy === null) return; // install_name_tool/codesign unavailable
+      const result = probe(foreignCopy);
+
+      // The runtime told us nothing about its images...
+      expect(result.residentCount).toBe(0);
+      expect(result.residentBeforeLoad).toEqual([]);
+      // ...so the guard must not claim it recognised a foreign library.
+      expect(result.name).not.toBe("MlxMixingError");
+      if (result.message !== null) {
+        expect(result.message).not.toContain("is already resident");
+      }
+    });
+  },
+);

@@ -1,6 +1,9 @@
 # dependencies
 node_modules/
 
+# the Python venv tools/native/build.sh probes for the wheel-class MLX
+.venv/
+
 # build output
 dist/
 *.tsbuildinfo

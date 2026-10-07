@@ -171,30 +171,62 @@ assert_size_class() {
   return 0
 }
 
+# Assertions that hold for a payload in *either* build mode, plus the wheel-class provenance hashes
+# where they are meaningful. Mode is a parameter rather than a constant because a source build
+# genuinely cannot satisfy a claim about a wheel it did not copy, and asserting it anyway is how mode
+# 2 came to be unbuildable: `check_payload` runs at the end of every build, so a hard hash assertion
+# made every source build exit non-zero (TASKS.md §10.11).
 check_payload() {
   local pkg="$1"
+  local mode="${2:-prebuilt}"
   local lib="$pkg/lib"
   local ok=0
-  log "verifying payload in $pkg"
+  log "verifying payload in $pkg (mode=$mode)"
 
   for f in node_mlx.node libmlx.dylib libjaccl.dylib mlx.metallib; do
     [[ -f "$lib/$f" ]] || { warn "  missing $lib/$f"; ok=1; }
   done
   [[ "$ok" -eq 0 ]] || return 1
 
-  log "sha256"
-  local want actual
-  for pair in "mlx.metallib:$WHEEL_METALLIB_SHA256" "libmlx.dylib:$WHEEL_LIBMLX_SHA256" "libjaccl.dylib:$WHEEL_LIBJACCL_SHA256"; do
-    want="${pair##*:}"; actual="$(sha256_of "$lib/${pair%%:*}")"
-    if [[ "$actual" == "$want" ]]; then
-      log "  ${pair%%:*}: ok (${actual:0:12}…)"
+  # SHA256SUMS against the files on disk. This is the one integrity assertion a user can reproduce
+  # themselves, and the only one that means the same thing in both modes.
+  log "SHA256SUMS"
+  if [[ -f "$pkg/SHA256SUMS" ]]; then
+    if (cd "$lib" && shasum -a 256 -c "$pkg/SHA256SUMS" >/dev/null 2>&1); then
+      log "  all $(grep -c . "$pkg/SHA256SUMS") entries match the staged files"
     else
-      warn "  ${pair%%:*}: MISMATCH"
-      warn "    expected ${want:0:12}… (wheel-class)"
-      warn "    got      ${actual:0:12}…"
+      (cd "$lib" && shasum -a 256 -c "$pkg/SHA256SUMS" 2>&1 | grep -v ': OK$' | sed 's/^/  /') || true
+      warn "  SHA256SUMS does not match the staged files"
       ok=1
     fi
-  done
+  else
+    warn "  $pkg/SHA256SUMS is missing"
+    ok=1
+  fi
+
+  log "sha256"
+  local want actual
+  if [[ "$mode" == "prebuilt" ]]; then
+    for pair in "mlx.metallib:$WHEEL_METALLIB_SHA256" "libmlx.dylib:$WHEEL_LIBMLX_SHA256" "libjaccl.dylib:$WHEEL_LIBJACCL_SHA256"; do
+      want="${pair##*:}"; actual="$(sha256_of "$lib/${pair%%:*}")"
+      if [[ "$actual" == "$want" ]]; then
+        log "  ${pair%%:*}: ok (${actual:0:12}…)"
+      else
+        warn "  ${pair%%:*}: MISMATCH"
+        warn "    expected ${want:0:12}… (wheel-class)"
+        warn "    got      ${actual:0:12}…"
+        ok=1
+      fi
+    done
+  else
+    # Provenance here is VERSION + SHA256SUMS, not §2: those hashes name a wheel a source build by
+    # definition does not contain. Recorded in VERSION, reported here as hashes, and gated by the
+    # benchmark (§5) rather than by equality with someone else's binary.
+    log "  source build: §2's wheel-class hashes do not apply — VERSION + SHA256SUMS are the provenance"
+    for f in mlx.metallib libmlx.dylib libjaccl.dylib; do
+      log "  $f: sha256 $(sha256_of "$lib/$f") ($(size_of "$lib/$f") bytes)"
+    done
+  fi
   actual="$(sha256_of "$lib/node_mlx.node")"
   # The addon is the one file we compile and then modify (rpath rewrite + adhoc re-sign), so its
   # shipped hash can never equal a raw-build hash. VERSION records the pre-surgery hash; that is the
@@ -213,7 +245,15 @@ check_payload() {
     warn "  != §2 reference ${ADDON_SHA256_REFERENCE:0:12}… — see s2_addon_reproduced in VERSION for why"
   fi
 
-  log "size class"; assert_size_class "$lib/mlx.metallib" || ok=1
+  log "size class"
+  if assert_size_class "$lib/mlx.metallib"; then
+    :
+  elif [[ "$mode" == "prebuilt" ]]; then
+    ok=1
+  else
+    warn "  source build: the size class is reported, not gated here — §5 accepts a source build on"
+    warn "  the benchmark (npm run bench:check with MLAYAX_MODEL_DIR set), which this script cannot run."
+  fi
   log "fused symbols"; assert_fused_symbols "$lib/node_mlx.node" "$lib/libmlx.dylib" || ok=1
 
   log "rpath"
@@ -254,7 +294,16 @@ check_payload() {
 # --check
 # ---------------------------------------------------------------------------------------------
 if [[ "$CHECK_ONLY" -eq 1 ]]; then
-  check_payload "$OUT"
+  # How the payload was built changes which assertions are meaningful, so read it from VERSION rather
+  # than assuming mode 1: `--check` on a source-built payload must assert the honest invariants
+  # instead of failing on hashes that could never match.
+  STAGED_MODE="$(ver_field "$OUT" build_mode)"
+  case "$STAGED_MODE" in
+    prebuilt|source) ;;
+    "") STAGED_MODE="prebuilt"; warn "$OUT/VERSION has no build_mode; assuming prebuilt" ;;
+    *) die "unknown build_mode '$STAGED_MODE' in $OUT/VERSION" ;;
+  esac
+  check_payload "$OUT" "$STAGED_MODE"
   exit $?
 fi
 
@@ -540,4 +589,4 @@ log "done"
 # ---------------------------------------------------------------------------------------------
 # Verify what we just staged — the same assertions --check runs, so a bad build fails here.
 # ---------------------------------------------------------------------------------------------
-check_payload "$OUT"
+check_payload "$OUT" "$MODE"

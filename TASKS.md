@@ -627,20 +627,39 @@ redistributing MLX ourselves, which is exactly the provenance burden mode 1 exis
       and missing-`core` branches in `binding.ts` (they need a broken payload), the mask-cache eviction
       path, and the defensive `catch` in `readInstallName`.
 
-### Phase 7 — CI
+### Phase 7 — CI — **DONE 2026-10-07**
 
-- [ ] `ci.yml` jobs:
-      - `lint-typecheck`: ubuntu, `biome ci`, `tsc -b`, `knip`.
-      - `unit`: ubuntu + macOS, Node 22 and 24; `vitest run` (core + tiny-fixture parity).
-      - `bun`: macOS, `bun install`, `bun test`, and a native smoke test using the checked-in
-        platform artifacts? No — build from the patch instead (below).
-      - `native`: macOS runner; run `tools/native/build.sh` in mode 2 (Xcode present in CI) **and**
-        mode 1, then assert the metallib size class and the benchmark gate; upload the artifact.
+`.github/workflows/ci.yml`, eight jobs. Deviations from the brief below are argued in §10.10.
+
+- [x] `ci.yml` jobs:
+      - `lint-typecheck`: ubuntu, `biome ci`, `tsc -b`, `tsc -p tsconfig.test.json`, `knip`.
+      - `unit`: ubuntu, Node 22 and 24; `vitest run`. Native-dependent files skip themselves here, so
+        this job is fast and needs nothing from macOS.
+      - `unit-macos`: macOS, Node 22 and 24, against the payload artifact — tiny-fixture parity
+        (fp32 bit-exact), the payload assertions, and the mixing guard against a real dyld.
+      - `bun`: macOS, `bun install --no-save`, `bun test`, then `scripts/packed-parity.mjs` under Bun.
+      - `native`: macOS; `tools/native/build.sh` in **mode 1** (prebuilt wheel-class MLX) + `--check`
+        (wheel hashes, metallib size class, fused symbols, rpath, `minos`, SHA256SUMS), the load-time
+        safety tests, the bench gate when a checkpoint is cached, and the artifact upload.
+      - `native-source`: macOS; `tools/native/build.sh` in **mode 2** (MLX built from source), then
+        `--check` and the bench gate. Main and on demand only — §10.10.
       - `pack`: `npm pack` both packages, `publint`, `@arethetypeswrong/cli`, size check, then install
-        the tarballs into a scratch project and run the tiny-fixture parity against the *packed*
-        artifact.
-- [ ] Cache: node_modules, the MLX source/build, and the HF fixture cache.
-- [ ] Acceptance: all jobs green on a fresh clone; the `pack` job proves the published layout works.
+        both tarballs into a scratch project and answer a request from *that* install
+        (`scripts/packed-parity.mjs`: fp32 bit-exact, and it prints which files it used).
+      - `bench`: opt-in `workflow_dispatch` input. Downloads the ~803 MiB checkpoint once; it is
+        cached, and the always-on jobs run the gate when that cache exists.
+- [x] Cache: `~/.npm` (through `actions/setup-node`), the node-mlx checkout + MLX wheel + pip cache
+      (keyed on the patch hash, the node-mlx commit and the MLX tag), and the HF checkpoint cache.
+- [x] Acceptance: all jobs green on a fresh clone; the `pack` job proves the published layout works.
+      Verified locally before pushing: `npm run verify`, `knip`, `bun test` (300 passed, 0 failed), a
+      real tarball install into a scratch project followed by `scripts/packed-parity.mjs` under Node
+      **and** Bun, and every `build.sh --check` branch (prebuilt, source, slow metallib, corrupt
+      `SHA256SUMS`) — which is how §10.11's two impossible assertions were found.
+      One caveat on "green": the `native-source` job's *build* could not be exercised here, because
+      this machine has CommandLineTools and no Metal toolchain (`xcrun --find metal` fails, which is the
+      message build.sh's mode-2 guard prints). Its verification logic is tested; its first real build
+      happens on the runner, on `main` or on demand rather than on a PR, so a failure there is a
+      toolchain or MLX-source problem and not a regression gate for pull requests.
 
 ### Phase 8 — Docs and licensing
 
@@ -715,7 +734,7 @@ Post-publish:
 | types | `tsc -b` | every commit |
 | dead code | `knip` | every commit |
 | unit tests | `vitest run` | ubuntu + macOS, Node 22/24, plus `bun test` |
-| coverage | `vitest run --coverage` (≥ 85 % core/mlx) | ubuntu |
+| coverage | `vitest run --coverage` (≥ 85 % core/mlx) | by hand — **not** wired into CI; §10.5, §10.10 |
 | tiny-fixture parity | `vitest run -t parity-tiny` | CI, no download |
 | real parity (fp32 bit-exact) | `MLAYAX_MODEL_DIR=… vitest run -t parity-real` | opt-in |
 | bench regression | `npm run bench:check` | opt-in, macOS |
@@ -1080,3 +1099,106 @@ action head must be **exact**, and the whole payload within one step. §7's `bat
 qualified accordingly — exact on the real checkpoint, within one rounding step on a 32-dim one. It is
 the same effect, with the same explanation, as the `manual attention` and `shapeless` deltas in
 `test/mlx.options.test.ts`.
+
+### 10.10 Phase 7's CI, as built: five decisions the phase brief did not anticipate
+
+The workflow is `.github/workflows/ci.yml`; what follows is why it does not look exactly like the
+Phase 7 checkboxes, and what it actually proves.
+
+**`unit` is two jobs, not one runner matrix.** The brief asks for "ubuntu + macOS, Node 22 and 24;
+`vitest run` (core + tiny-fixture parity)". The parity half needs the native payload, and the payload
+needs the patch build — so a single matrix job would need `needs: [native]`, which makes every Linux
+row queue ~10 minutes behind a macOS build to run tests that touch no native code at all. Split into
+`unit` (ubuntu, no payload, parity skips itself) and `unit-macos` (payload artifact, full parity), the
+feedback that matters — lint, types and the portable tests — arrives in a couple of minutes. The cost
+is one duplicated job definition, which is cheaper than a red build nobody waits for.
+
+**Coverage is deliberately not a CI step.** §6 lists it, §10.5 records that `npm run test:coverage`
+fails in every configuration (73.8 % `src/mlx` branches against an 85 % threshold), and a check that is
+red on every commit is indistinguishable from a check that is ignored. It stays the command you run by
+hand and read; the §6 table now says so. When the missing fallback-branch tests land, a coverage job is
+the natural next step and needs no new tooling.
+
+**Mode 2 runs on `main` and on demand, not on pull requests.** A source build of MLX plus its Metal
+shaders is the slowest thing in the repository, and §5 accepts mode 2 only on the benchmark — which on
+a runner that is not the baseline's CPU reports "inconclusive" rather than pass or fail (§6). Running
+it per PR would buy latency and no verdict. It still runs on every push to `main`, so the claim "mode 2
+works" stays tested rather than remembered.
+
+**`node_modules` is cached indirectly, as `~/.npm`.** A restored `node_modules` tree is
+platform-, ABI- and build-specific (`@huggingface/tokenizers` is a native addon), which is a class of
+failure that looks like a code bug. What makes `npm ci` fast is the package download cache, so that is
+what `actions/setup-node`'s `cache: npm` caches.
+
+**macOS jobs pin `macos-26`.** The floor is macOS 26.2 because of the wheel-class `libmlx.dylib`
+(§10.2), and it is now GA as an Apple Silicon runner image with Xcode. On an older image the payload
+cannot be loaded at all, so the green checkmarks would be about the runner rather than about the
+artifact. This is also the reason the bench gate is not a default verdict: it needs the real ~803 MiB
+checkpoint, so the workflow downloads it once behind a `workflow_dispatch` input and the always-on
+jobs run the gate only when that cache is present — and say so in the log when it is not, rather than
+passing quietly.
+
+What CI now proves that nothing else did: an installed-from-tarball copy of both packages answers a
+request correctly. Every other parity test imports the workspace source, so none of them would notice
+a `files` allowlist that dropped `vendor/`, a `dist/` file that never got built into the tarball, or an
+`exports` map that resolves to nothing. `scripts/packed-parity.mjs` is that test, and it prints the
+paths it resolved so a green run is evidence about *which* files were exercised.
+
+### 10.11 Two gates asserted things that could not be true
+
+Both were found by wiring Phase 7 up, and both were invisible for the same reason: the assertion was
+never reached in the configuration the plan assumed.
+
+**Mode 2 could never pass its own verification.** `check_payload` compared the three copied MLX files
+against §2's wheel-class hashes unconditionally — but the same function runs at the end of *every*
+build, and a from-source payload by definition does not contain a wheel. So every mode-2 build exited
+non-zero after building what it was asked to build, which is how "support both modes" (Phase 5, ticked)
+coexisted with a mode 2 that could not complete. Fixed by making the assertions mode-aware:
+
+| assertion | mode 1 (prebuilt) | mode 2 (source) |
+|---|---|---|
+| §2 wheel hashes | hard gate | reported; provenance is `VERSION` + `SHA256SUMS` |
+| metallib size class | hard gate (≥ 180 MB) | reported — §5 accepts mode 2 on the bench gate |
+| fused symbols, rpath, `minos` vs `VERSION`, path hygiene | hard gate | hard gate |
+| `SHA256SUMS` matches the staged files | hard gate | hard gate |
+
+`--check` reads `build_mode` from `VERSION` instead of assuming mode 1, so the release gate and the
+source job assert the right set rather than one set that fits one of them. `SHA256SUMS` verification is
+also new, and it is worth having in both modes: it is the one integrity claim a user can reproduce by
+themselves. Verified against staged copies: prebuilt passes, source passes without a hash complaint, a
+truncated metallib still fails in prebuilt mode, and a corrupt file is named by the `SHA256SUMS` check.
+
+**What is *not* verified here** is mode 2's build itself. `xcrun --find metal` fails on this machine
+(CommandLineTools, no Metal toolchain), so the first source build of MLX runs in CI. Everything around
+it is tested — the verification logic per mode, the staging, the `--check` inference — but if
+`native-source` fails on its first run, look at the CMake/Metal output before suspecting anything in
+this repository. That is also why the job does not gate pull requests.
+
+**The Bun half of the mixing guard asserted an image list Bun does not have.** `test/mlx.mixing.test.ts`
+proves a real dyld collision is stopped, and it rests on `process.report.getReport().sharedObjects` to
+show the foreign library is *resident* before blaming the guard. `bun test` failed 3 of those tests. Two
+separate problems:
+
+- the probe itself threw on Bun, where `process.report` does not exist — so it now reads the image list
+defensively and reports zero images as zero;
+- the obvious capability check is wrong. Bun **does** implement `process.report.getReport()`, and it
+returns `sharedObjects: []` on every call (measured on 1.3.13). `typeof process.report?.getReport ===
+"function"` therefore says "can enumerate images" and lies. The predicate is now measured — does the
+report contain any image at all? — and this process always has Node's own libraries resident, so a
+working enumerator has something to report (347 images on macOS against Bun's 0).
+
+The collision tests are skipped where they cannot be honest, and the degradation itself is asserted
+instead: on a runtime that cannot see its images, the guard must not produce an `MlxMixingError` it
+could not have observed. That is `binding.ts`'s documented Bun path, and it now has a test rather than
+a comment. `bun test`: 300 passed, 16 skipped, 0 failed.
+
+**One more, in the tooling this phase added.** `scripts/packed-parity.mjs` first resolved the package
+with `import.meta.resolve(specifier, parent)`. Without `--experimental-import-meta-resolve` Node
+*silently ignores* the parent argument and resolves against the calling file's directory, so the
+clean-room script resolved this repository's own copy while reporting that it had tested the scratch
+install. It was caught only because the script prints the path it used — a script that reported "ok"
+would have been worse than no script. Resolution is now two explicit steps, both consumer-facing:
+`require.resolve("@fllstck/mlayax/package.json")` from the project directory (the same lookup
+`vendor/node-mlx/native-binding.cjs` does), then that manifest's own `exports["."].import`. A plain
+`require.resolve("@fllstck/mlayax")` cannot work here, and should not: the package is deliberately
+ESM-only.

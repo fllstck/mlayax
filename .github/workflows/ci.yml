@@ -1,0 +1,426 @@
+# CI — TASKS.md Phase 7.
+#
+# The jobs are cut along the one line that matters here: whether a job needs the native payload.
+# Building that payload means cloning node-mlx, pinning MLX v0.32.3, applying the patch and compiling
+# the addon, so anything that needs it waits, while everything that does not stays fast. That is why
+# the unit tests are two jobs (`unit` and `unit-macos`) rather than one job over a runner matrix: a
+# Linux row must not queue behind a macOS build to run tests that need no native code.
+#
+# macOS jobs pin `macos-26`. The floor is macOS 26.2, not 14 — it is what the wheel-class
+# `libmlx.dylib` declares (TASKS.md §10.2) — so a macOS 14 or 15 runner cannot even load the payload,
+# and a green run there would be meaningless. `macos-26` is Apple Silicon and carries Xcode (the Metal
+# toolchain mode 2 needs).
+#
+# What runs where, and why:
+#
+#   lint-typecheck  ubuntu   biome + tsc + knip — no native, no macOS
+#   unit            ubuntu   Node 22/24; core, hub, packaging. Tiny-fixture parity *skips* here (it
+#                            needs the addon) and runs in `unit-macos`
+#   native          macos-26 builds the payload from the pinned patch, refuses a slow/wrong MLX, runs
+#                            the load-time safety tests, uploads the artifact the other jobs use
+#   unit-macos      macos-26 Node 22/24 against that artifact: tiny-fixture parity, the mixing guard
+#                            against a real dyld, payload assertions
+#   native-source   macos-26 mode 2 (MLX built from source): the §5 provenance experiment
+#   bun             macos-26 bun install + bun test + a real prediction under Bun
+#   pack            macos-26 packs both tarballs, runs publint/attw/size, installs the tarballs into a
+#                            clean room and answers a request from *that* install
+#   bench           opt-in (workflow_dispatch), needs the real ~803 MiB checkpoint
+#
+# Deliberately absent: coverage. `npm run test:coverage` cannot pass in any configuration (TASKS.md
+# §10.5 — `src/mlx` branch coverage is 73.8 % against an 85 % threshold), and a permanently red check
+# teaches people to ignore CI. It stays a command you run by hand until the missing tests exist.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      bench:
+        description: Also run the benchmark gate (needs the ~803 MiB checkpoint)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read # this run's own artifacts (upload/download-artifact)
+
+# One run per branch/PR. A superseded push is not worth queueing a native build for.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Provenance. Change these only with the patch re-derived — see CONTRIBUTING.md's MLX bump playbook.
+  NODE_MLX_COMMIT: 4bf8b1d6de32ae5ec402525bff1f041d73618275
+  MLX_TAG: v0.32.3
+  # The wheel-class MLX (the ~190 MB metallib). `mlx.metallib` from this wheel is the build §2 measured;
+  # build.sh resolves it from `.venv` and refuses the ~35 %-slower Homebrew class.
+  PIP_MLX_VERSION: 0.32.3
+  NATIVE_WORK: /tmp/mlayax-node-mlx
+  NATIVE_WORK_SOURCE: /tmp/mlayax-node-mlx-source
+  # The reference checkpoint, as the Hub sees it (public; no token).
+  CHECKPOINT_REPO: aac6fef/laya-mlx
+  CHECKPOINT_CACHE: ~/.cache/huggingface
+
+jobs:
+  lint-typecheck:
+    name: lint, types, dead code
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # §6 wants all three on every commit. `biome ci` is the non-writing variant: it fails on a
+      # formatting difference instead of silently fixing it, so a dirty tree is a red build.
+      - name: biome ci
+        run: npx biome ci .
+      - name: tsc -b (src + emitted dist)
+        run: npm run build
+      - name: tsc -p tsconfig.test.json (tests + bench, not part of the build)
+        run: npx tsc -p tsconfig.test.json
+      - name: knip (dead exports)
+        run: npx knip
+
+  unit:
+    name: unit (ubuntu, node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      # dist/ is built first on purpose: `test/public-surface.test.ts` asserts things about the
+      # *emitted* declarations, and the mixing probe imports `dist/mlx/index.js` from a child process.
+      - run: npm run build
+      # Native-dependent tests skip themselves here (the addon does not exist on Linux, by design —
+      # §0 puts Windows/Linux out of scope). They run for real in `unit-macos`.
+      - run: npm test
+
+  native:
+    name: native payload (mode 1, prebuilt MLX)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: toolchain
+        run: |
+          sw_vers
+          uname -m
+          node --version
+          cmake --version | head -1
+          python3 --version
+
+      # The MLX source/build and the Python wheel are the slow half of this job, so they are cached
+      # under a key that changes whenever the patch, the pinned commit, the MLX tag or build.sh move.
+      # `${{ env.NATIVE_WORK }}` keeps the node-mlx checkout (patch already applied) between runs;
+      # build.sh reuses it and skips the clone, the submodule fetch and `npm install`.
+      - name: restore build cache (node-mlx checkout, MLX wheel, pip)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.NATIVE_WORK }}
+            ${{ github.workspace }}/.venv
+            ~/.cache/pip
+          key: native-${{ runner.arch }}-${{ env.NODE_MLX_COMMIT }}-${{ env.MLX_TAG }}-${{ hashFiles('tools/native/node-mlx-mlx32.patch', 'tools/native/build.sh') }}
+
+      - name: install the wheel-class MLX (mode 1 prebuilt, restored from cache when possible)
+        run: |
+          if [ ! -x .venv/bin/python ]; then python3 -m venv .venv; fi
+          .venv/bin/python -m pip install --quiet --upgrade pip
+          .venv/bin/pip install --quiet "mlx==${PIP_MLX_VERSION}"
+          .venv/bin/pip show mlx | head -3
+
+      # Writes lib/ + VERSION + SHA256SUMS into packages/mlayax-darwin-arm64, then verifies what it
+      # staged: the wheel's provenance hashes, the metallib size class, the fused symbols, the rpath,
+      # the declared macOS floor and SHA256SUMS itself. The deployment target is deliberately *not*
+      # forced to 26.0: that is what reproduces §2's byte-exact addon hash (§10.3), and it depends on
+      # the local clang, so making it a CI gate would fail for reasons that are not regressions.
+      - name: build the payload (pinned node-mlx @ MLX ${{ env.MLX_TAG }} + patch)
+        run: tools/native/build.sh --work "$NATIVE_WORK"
+
+      - name: verify the payload (hashes, size class, symbols, rpath, floor, SHA256SUMS)
+        run: npm run check:native
+
+      - run: npm ci
+      - run: npm run build
+
+      # §6's "native safety" gate: SHA256SUMS and the size class are asserted by build.sh, and these
+      # two files are the ones that touch a real dynamic loader and a real MLX.
+      - name: native safety tests (payload + mixing guard)
+        run: npx vitest run test/payload.test.ts test/mlx.mixing.test.ts
+
+      # The bench gate is the only way to prove a payload is fast, and it needs the real checkpoint.
+      # Rather than download 803 MiB on every push, it runs here whenever a checkpoint has been cached
+      # (the opt-in `bench` job, and this step, share one cache key). Note that on a runner that is not
+      # the baseline's CPU the gate reports "inconclusive" and exits 0 — deliberately: a verdict from
+      # different hardware would be a lie either way (§6).
+      - name: restore the checkpoint cache
+        id: checkpoint
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CHECKPOINT_CACHE }}
+          key: checkpoint-${{ env.CHECKPOINT_REPO }}-v1
+
+      - name: bench gate
+        if: steps.checkpoint.outputs.cache-hit == 'true'
+        run: MLAYAX_MODEL_DIR="$(node scripts/fetch-checkpoint.mjs --offline)" npm run bench:check
+
+      - name: bench gate skipped (no checkpoint cached)
+        if: steps.checkpoint.outputs.cache-hit != 'true'
+        run: |
+          echo "::notice::No checkpoint in the cache, so the bench gate did not run. Run the workflow"
+          echo "::notice::manually with the 'bench' input once to download it and populate the cache."
+
+      # Retained for the whole run: `unit-macos` and `pack` consume it, and the tarball it produces is
+      # the thing being validated. ~213 MiB raw, ~64 MiB as stored.
+      - name: upload the native payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlayax-darwin-arm64-payload
+          path: |
+            packages/mlayax-darwin-arm64/lib
+            packages/mlayax-darwin-arm64/VERSION
+            packages/mlayax-darwin-arm64/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  unit-macos:
+    name: unit + parity (macOS, node ${{ matrix.node }})
+    needs: [native]
+    runs-on: macos-26
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      # The payload lands where the resolver looks for it: `@fllstck/mlayax-darwin-arm64/lib`, reached
+      # through the workspace symlink. Nothing is passed in the environment — that is the point, the
+      # resolution order under test is the published one.
+      - name: install the native payload
+        uses: actions/download-artifact@v4
+        with:
+          name: mlayax-darwin-arm64-payload
+          path: packages/mlayax-darwin-arm64
+      - run: npm ci
+      - run: npm run build
+      - name: unit + tiny-fixture parity (fp32 bit-exact, fp16 within 4e-4)
+        run: npm test
+
+  native-source:
+    name: native payload (mode 2, MLX from source)
+    # §5's provenance experiment: the same patch against MLX built here rather than copied from a
+    # wheel. It is slow (a full MLX + Metal build) and its verdict is the benchmark, so it runs on
+    # main and on demand, not on every PR. The 120-minute ceiling assumes the standard 3-core macOS
+    # runner; a `-xlarge` runner shortens it and is billed.
+    if: github.event_name != 'pull_request'
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Metal toolchain (mode 2 needs the full Xcode, not CommandLineTools)
+        run: |
+          xcode-select -p
+          xcrun --find metal
+
+      - name: restore build cache (MLX source, node-mlx checkout)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NATIVE_WORK_SOURCE }}
+          key: native-source-${{ runner.arch }}-${{ env.NODE_MLX_COMMIT }}-${{ env.MLX_TAG }}-${{ hashFiles('tools/native/node-mlx-mlx32.patch', 'tools/native/build.sh') }}
+
+      # Staged into a scratch --out, never into the package: the shippable payload is mode 1's, and a
+      # source build must not be able to overwrite it. `--check` then reads build_mode from VERSION and
+      # asserts what is meaningful for a source build (SHA256SUMS, symbols, rpath, floor) instead of
+      # failing on §2's wheel hashes, which a from-source payload can never match (§10.11).
+      - name: build the payload from source
+        run: |
+          tools/native/build.sh \
+            --mode source \
+            --work "$NATIVE_WORK_SOURCE" \
+            --out "$RUNNER_TEMP/source-payload"
+
+      - name: verify the payload (source-mode invariants)
+        run: tools/native/build.sh --check --out "$RUNNER_TEMP/source-payload"
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: restore the checkpoint cache
+        id: checkpoint
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CHECKPOINT_CACHE }}
+          key: checkpoint-${{ env.CHECKPOINT_REPO }}-v1
+
+      # §5 accepts a source build only on the benchmark, so this is where the number would come from.
+      # No checkpoint cached means no verdict, and it says so rather than passing quietly.
+      - name: bench gate (mode 2 vs §2's numbers)
+        if: steps.checkpoint.outputs.cache-hit == 'true'
+        env:
+          MLAYAX_NATIVE_DIR: ${{ runner.temp }}/source-payload/lib
+        run: MLAYAX_MODEL_DIR="$(node scripts/fetch-checkpoint.mjs --offline)" npm run bench:check
+
+      - name: bench gate skipped (no checkpoint cached)
+        if: steps.checkpoint.outputs.cache-hit != 'true'
+        run: echo "::notice::No checkpoint cached — mode 2's acceptance criterion (the bench gate) did not run."
+
+      - name: upload the source payload (provenance, not shippable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlayax-darwin-arm64-payload-source
+          path: |
+            ${{ runner.temp }}/source-payload/lib
+            ${{ runner.temp }}/source-payload/VERSION
+            ${{ runner.temp }}/source-payload/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  bun:
+    name: bun (install, test, predict)
+    needs: [native]
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # Pinned to the runtime §2 recorded, not "whatever the image ships": `bun test`'s vitest
+      # compatibility and the vendored JS layer both move between releases.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - name: install the native payload
+        uses: actions/download-artifact@v4
+        with:
+          name: mlayax-darwin-arm64-payload
+          path: packages/mlayax-darwin-arm64
+      - name: bun install
+        run: bun install --no-save
+      # Bun runs the vitest suite through its own runner (`vitest` imports are aliased to `bun:test`).
+      # dist/ first: the mixing probe imports it from a child process.
+      - name: bun run build
+        run: bun run build
+      - name: bun test
+        run: bun test
+      - name: predict() under Bun, against the tiny fixture
+        run: bun scripts/packed-parity.mjs
+
+  pack:
+    name: pack + clean-room install
+    needs: [native]
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: install the native payload
+        uses: actions/download-artifact@v4
+        with:
+          name: mlayax-darwin-arm64-payload
+          path: packages/mlayax-darwin-arm64
+      - run: npm ci
+      - run: npm run build
+
+      # §6's packaged-artifact gate: the metadata has to be right before anything is installed.
+      - name: publint + attw
+        run: |
+          npm run check:publint
+          npm run check:attw
+
+      # Also asserts the tarballs contain only the intended files, which is how a stray `files` entry
+      # or an accidental payload in the façade gets noticed.
+      - name: tarball size + contents
+        run: npm run check:size
+
+      - name: pack both tarballs
+        run: |
+          mkdir -p "$RUNNER_TEMP/clean-room/pkgs"
+          npm pack --workspaces --pack-destination "$RUNNER_TEMP/clean-room/pkgs"
+
+      # The clean room. Installing both tarballs in **one** command is deliberate: the façade's
+      # optionalDependency on the platform package resolves from the tree, so nothing is fetched from
+      # the registry — which is what makes this a valid pre-publish test rather than a network test.
+      - name: install the tarballs into a scratch project
+        working-directory: ${{ runner.temp }}/clean-room
+        run: |
+          printf '{\n  "name": "mlayax-clean-room",\n  "private": true,\n  "type": "module"\n}\n' > package.json
+          npm install ./pkgs/*.tgz --no-audit --no-fund
+          test -f node_modules/@fllstck/mlayax/dist/index.js
+          test -f node_modules/@fllstck/mlayax-darwin-arm64/lib/node_mlx.node
+          test -f node_modules/@fllstck/mlayax-darwin-arm64/SHA256SUMS
+
+      # Answers a real request through the installed package *and* the installed payload, and prints
+      # which files it used. fp32 bit-exact against the same reference the test suite uses.
+      - name: predict() from the packed artifact
+        run: node "$GITHUB_WORKSPACE/scripts/packed-parity.mjs" --project "$RUNNER_TEMP/clean-room"
+
+      # SHA256SUMS lists bare filenames (it is written by `shasum` from inside lib/), so it is checked
+      # from there — the same way `build.sh --check` does it.
+      - name: SHA256SUMS from the installed payload
+        working-directory: ${{ runner.temp }}/clean-room/node_modules/@fllstck/mlayax-darwin-arm64/lib
+        run: shasum -a 256 -c ../SHA256SUMS
+
+  bench:
+    name: bench gate (opt-in)
+    if: github.event_name == 'workflow_dispatch' && inputs.bench
+    needs: [native]
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: install the native payload
+        uses: actions/download-artifact@v4
+        with:
+          name: mlayax-darwin-arm64-payload
+          path: packages/mlayax-darwin-arm64
+      - run: npm ci
+      - run: npm run build
+
+      # Cold once, cached afterwards: the cache is saved at the end of this job, and the `native` job
+      # reads the same key. The download also exercises the Hub fetcher's cold path for real.
+      - name: restore the checkpoint cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CHECKPOINT_CACHE }}
+          key: checkpoint-${{ env.CHECKPOINT_REPO }}-v1
+
+      - name: fetch the checkpoint (~803 MiB, once per cache key)
+        run: node scripts/fetch-checkpoint.mjs > /dev/null
+
+      - name: bench gate
+        run: MLAYAX_MODEL_DIR="$(node scripts/fetch-checkpoint.mjs --offline)" npm run bench:check

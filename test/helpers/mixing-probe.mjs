@@ -42,7 +42,10 @@ try {
   // Expected: "Module did not self-register". The image is mapped and resident anyway.
 }
 
-const sharedObjects = process.report.getReport().sharedObjects ?? [];
+// `process.report` is Node-only: Bun has no image list at all, which is exactly the case
+// `describeMlxLoadFailure` exists for. The probe has to survive that rather than throw here, and
+// reporting zero images is the honest answer when the runtime will not enumerate them.
+const sharedObjects = process.report?.getReport?.()?.sharedObjects ?? [];
 result.residentCount = sharedObjects.length;
 result.residentBeforeLoad = sharedObjects.filter((s) => s.endsWith("libmlx.dylib"));
 
