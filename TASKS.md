@@ -719,6 +719,21 @@ Pre-flight (all must be green):
 - [ ] Clean-room install test: in a scratch dir, `npm i <tarball-dir>` and
       `bun add <tarball-dir>`, then run a real prediction from TypeScript under both runtimes.
 
+*Verified locally on 2026-10-07, against the current tree — re-run after any further change, because a
+pre-flight result belongs to a commit and not to a plan. Four of the five pass:*
+
+| check | result |
+|---|---|
+| `npm run verify` | green (`biome ci`, `tsc -b`, `tsc -p tsconfig.test.json`, 319 tests, licences) |
+| `npm run verify:release` | green — `publint` clean for both packages, `attw` `--profile esm-only` (the one `CJSResolvesToESM` note is expected for an ESM-only package), size gate 237.5 KiB / 300 KiB and 64.87 MiB / 120 MiB, `--check` passed |
+| `npm run bench:check` | **pass**, and a real verdict rather than "inconclusive" because this is the baseline's CPU: 10.3 ms (1.01x), 15.1 ms (0.98x), 53.7 ms (0.91x), 298 q/s, RSS 987 MiB against a 1400 MiB ceiling |
+| `npm pack --dry-run` (native) | 68.0 MB packed / 215.5 MB unpacked, 13 files, all on the allowlist |
+| clean-room install | tarballs ✓ under Node and Bun (§7's first straggler); the **registry** half needs the packages published |
+
+*The one thing no local run can settle is the CI workflow itself: it has never executed, so the first
+push is a real test, and the `native-source` job's first MLX build from source is the part most likely
+to surprise (this machine has CommandLineTools and no Metal toolchain — §10.11).*
+
 Publish (manual, in this order — platform package first):
 
 - [ ] `npm login` (2FA on the `@fllstck` scope/org; verify the scope exists and you own it).
