@@ -14,6 +14,7 @@
       "!**/node_modules",
       "!**/*.tgz",
       "!**/test/fixtures/tiny",
+      "!**/test/fixtures/ref",
       "!**/models"
     ]
   },

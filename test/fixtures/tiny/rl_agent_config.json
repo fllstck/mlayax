@@ -1,0 +1,26 @@
+{
+  "encoder": "answerdotai/ModernBERT-large",
+  "head_layers": 2,
+  "max_len": 64,
+  "head_max_len": 32,
+  "max_prefixes": 6,
+  "act_costs": {
+    "escalate": 0.5
+  },
+  "cost_wrong_act": 3.0,
+  "amp_dtype": "bf16",
+  "model_name": "rl-agent",
+  "temperature": [
+    1.5,
+    1.5,
+    1.5
+  ],
+  "temperature_by_options": {
+    "choice:3-5": 1.5,
+    "choice:6-10": 1.5,
+    "score:3-5": 1.5,
+    "noul:2": 1.5,
+    "choice:11+": 1.5,
+    "choice:2": 1.5
+  }
+}
