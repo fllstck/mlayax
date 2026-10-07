@@ -6,9 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the
 versions of both packages, published together. Performance is part of the contract here, so a number
 that changes is a change worth an entry — §6 of [`TASKS.md`](TASKS.md) is the gate that enforces it.
 
-## [0.1.0] — unreleased
+## [0.1.0] — 2026-10-07
 
-Phase 9 stamps the release date; the repository tag `v0.1.0` matches `package.json` in both packages.
+Published manually to npm, platform package first, so the tarballs carry **no npm provenance
+attestation** — that needs CI + OIDC. The repository tag `v0.1.0` matches `package.json` in both
+packages.
+
+Verified from a clean machine's point of view after publishing, in empty directories with an empty npm
+cache: the published bytes match what was built (sha1 against the registry's own metadata, sha256
+against `SHA256SUMS`), both packages arrive, and `predict()` reproduces the quickstart's documented
+numbers under Node 22.23.3, Node 24.15.0 and Bun 1.3.13.
 
 **First release.** An independent TypeScript port of Laya's typed-decision runtime, running on Apple's
 MLX through a patched node-mlx binding. No Python, no subprocess, no install scripts, no bundled

@@ -716,8 +716,10 @@ Pre-flight (all must be green):
       release machine is not the baseline's CPU (§6).
 - [ ] `npm pack --dry-run --workspace @fllstck/mlayax-darwin-arm64` → confirm files + size
       (< ~120 MiB compressed; note npm rejects around 200 MB with HTTP 413).
-- [ ] Clean-room install test: in a scratch dir, `npm i <tarball-dir>` and
+- [x] Clean-room install test: in a scratch dir, `npm i <tarball-dir>` and
       `bun add <tarball-dir>`, then run a real prediction from TypeScript under both runtimes.
+      Done in Phase 7 against the packed tarballs (Node and Bun), and again in Phase 9 **against the
+      registry** — see the publish section below, which is the stronger version of this test.
 
 *Verified locally on 2026-10-07, against the current tree — re-run after any further change, because a
 pre-flight result belongs to a commit and not to a plan. Four of the five pass:*
@@ -728,7 +730,7 @@ pre-flight result belongs to a commit and not to a plan. Four of the five pass:*
 | `npm run verify:release` | green — `publint` clean for both packages, `attw` `--profile esm-only` (the one `CJSResolvesToESM` note is expected for an ESM-only package), size gate passes (237.5 KiB / 300 KiB when first run, 252.9 KiB once the docs and JSDoc landed) and 64.87 MiB / 120 MiB, `--check` passed |
 | `npm run bench:check` | **pass**, and a real verdict rather than "inconclusive" because this is the baseline's CPU: 10.3 ms (1.01x), 15.1 ms (0.98x), 53.7 ms (0.91x), 298 q/s, RSS 987 MiB against a 1400 MiB ceiling |
 | `npm pack --dry-run` (native) | 68.0 MB packed / 215.5 MB unpacked, 13 files, all on the allowlist |
-| clean-room install | tarballs ✓ under Node and Bun (§7's first straggler); the **registry** half needs the packages published |
+| clean-room install | tarballs ✓ under Node and Bun (Phase 7), and from the **registry** cold ✓ in Phase 9 — see below |
 
 *The one thing no local run can settle is the CI workflow itself: it has never executed, so the first
 push is a real test, and the `native-source` job's first MLX build from source is the part most likely
@@ -751,35 +753,37 @@ Publish (manual, in this order — platform package first):
       our `npm pack`** (shasum `4cc851ec1d35b9bcac9132ec8b898e7e5431ee7c`), 13 files, `SHA256SUMS`
       verifies against the installed payload, `VERSION` says `wheel-class`/`prebuilt`/`min_macos=26.2`,
       and the addon computes `sum([1,2,3]) = 6`.
-- [ ] `npm publish --workspace @fllstck/mlayax --access public`
-      (exact `optionalDependencies` pin `"@fllstck/mlayax-darwin-arm64": "0.1.0"`; the native package
-      must exist before the façade is installed by anyone).
-      **Accepted but not yet served.** The `PUT` returned `202` (queued) and the packument now advertises
-      `latest: 0.1.0` with 42 files / 258 964 bytes unpacked — but a brand-new package name goes through
-      npm's **staged release**, and until the review completes the name is held by a `0.0.0-stage`
-      placeholder and the real tarball **404s**. Watch it with:
+- [x] `npm publish --workspace @fllstck/mlayax --access public` — **live**, after a staged release.
+      The `PUT` returned `202` and the packument advertised `latest: 0.1.0` while the name was still held
+      by npm's `0.0.0-stage` placeholder and the real tarball **404'd** — a brand-new package name goes
+      through a staged release, so metadata can precede the bytes by minutes. Nothing needed
+      re-publishing; it cleared on its own. The published bytes are confirmed: sha1
+      `897475ac0abd99e270116e7aad93ad91e0a1ba67` from a plain `curl` equals the packument's own
+      `dist.shasum`, 42 files, 258 964 bytes unpacked, `optionalDependencies` pinning the platform
+      package to `0.1.0` exactly.
+
+      **And it is verified cold, never on this machine.** A `npm i @fllstck/mlayax` here *succeeds*
+      either way, because we published from this machine and the npm cache serves a tarball the registry
+      may not be serving at all — an install that looks green in the middle of an unfinished publish.
+      That is exactly how the staged release was nearly missed. Both `CONTRIBUTING.md` and the checklist
+      below now use the two checks that cannot be fooled:
 
       ```bash
       curl -sIL -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/@fllstck/mlayax/-/mlayax-0.1.0.tgz
-      ```
-
-      **And verify it cold, never on this machine.** A `npm i @fllstck/mlayax` here *succeeds*, because
-      we published from this machine and the npm cache serves the tarball the registry does not have
-      yet — an install that looks green in the middle of a failed publish. The honest check is a scratch
-      directory with an empty cache:
-
-      ```bash
       npm i @fllstck/mlayax --cache /tmp/fresh-cache --prefer-online --no-audit
       ```
-- [ ] Verify: `npm view @fllstck/mlayax version dependencies optionalDependencies dist.unpackedSize`.
-      Partly done: `optionalDependencies` pins `0.1.0`, the `dist` metadata agrees with our build
-      (`fileCount` 42, no `.map` entries), and the published `dist/**` is byte-identical to
-      `packages/mlayax/dist` once the local-only maps are excluded. Still open until the tarball serves.
-- [ ] Verify a fresh install from the *registry* on Node and Bun (not from a tarball), run a
+- [x] Verify: `npm view @fllstck/mlayax version dependencies optionalDependencies dist.unpackedSize`.
+      `optionalDependencies` pins `@fllstck/mlayax-darwin-arm64: 0.1.0`; the `dist` metadata agrees with
+      our build (`fileCount` 42, no `.map` entries, 258 964 bytes unpacked); and the published
+      `dist/**` is byte-identical to `packages/mlayax/dist` once the local-only maps are excluded.
+- [x] Verify a fresh install from the *registry* on Node and Bun (not from a tarball), run a
       prediction, then `node_modules/@fllstck/mlayax-darwin-arm64` present and `SHA256SUMS` valid.
-      The Node half passed **against the cache** and reproduced the documented example exactly
-      (`billing 0.9587`, `score 1.3603`, `noul 0.8215`, `confidence 0.8175`); Bun failed with a 404 on the
-      tarball, which is the same staged-release 404 as above. Re-run both, cold, when it flips.
+      Done **cold** on 2026-10-07, in empty directories with an empty npm cache, and it is the strongest
+      evidence the release has. Node 24.15.0 and Bun 1.3.13 (`npm i --cache /tmp/npm-cache-cold
+      --prefer-online` and `bun add`), plus Node 22.23.3 for the floor: both packages arrive, the façade
+      is 42 files with no maps, `SHA256SUMS` verifies all four payload files, and every runtime
+      reproduces the README's documented example to the digit — `billing 0.9587`, `score 1.3603`,
+      `noul 0.8215`, `confidence 0.8175` — as does the committed tiny-fixture parity (fp32 bit-exact).
 - [ ] Note in the release notes: published manually, so the tarballs carry **no npm provenance**
       attestation (that requires CI + OIDC). If provenance is wanted later, add a release workflow.
       The note is already written in `docs/release-notes-0.1.0.md`.
@@ -827,26 +831,26 @@ Post-publish:
 
 ## 7. Definition of done for 0.1.0
 
-- [ ] `npm i @fllstck/mlayax` then `predict()` works on a clean machine (Node ≥ 22 and Bun ≥ 1.2),
+- [x] `npm i @fllstck/mlayax` then `predict()` works on a clean machine (Node ≥ 22 and Bun ≥ 1.2),
       with the checkpoint downloaded once and cached.
-      **Everything except the registry half is verified** (2026-10-07): a scratch project with nothing
-      but the two packed tarballs installed — no workspace, no `MLAYAX_*` variables — does a cold
-      `loadAsync()` from `https://huggingface.co` into an empty `HF_HOME` (Node 24.15: 70.6 s;
-      Bun 1.3.13: 69.3 s), predicts the same answers in both runtimes and both directions of the
-      cache (Node's download read by Bun, and a second cold download done by Bun's own `fetch`), and
-      then answers identically through a sync, `offline: true` `load()`. (Node 22 is not on this
-      machine — the CI `unit`/`unit-macos` matrix covers the ≥ 22 floor for the suite and for
-      tiny-fixture parity; the download path itself is version-independent `fetch` + `fs`.)
-      The cache it writes is the
-      `huggingface_hub` layout — `snapshots/<commit>/…` symlinked into `blobs/<sha256>` — so a Python
-      cache and this one are interchangeable. `load()` on the cold cache refuses with the documented
-      message instead of downloading. What remains is the same test against the **registry** rather
-      than a tarball, which needs the packages published — it is Phase 9's pre-flight item, and the
-      `pack` CI job runs the tarball half on every push.
+      **Verified 2026-10-07, from the registry, cold** — empty directories, empty npm cache, nothing from
+      this repository on the module path. Node 22.23.3, Node 24.15.0 and Bun 1.3.13 each install both
+      packages, verify `SHA256SUMS` against all four payload files, and reproduce the documented example
+      to the digit (`billing 0.9587`, `score 1.3603`, `noul 0.8215`, `confidence 0.8175`).
+      **Cold first run**, from an installed tarball rather than the workspace, with an empty `HF_HOME`:
+      `loadAsync()` fetched the checkpoint from `https://huggingface.co` in 70.6 s (Node) and 69.3 s
+      (Bun), Node's download was then read by Bun, a second cold download was done by Bun's own `fetch`,
+      and the second run answered identically through a sync, `offline: true` `load()`. The cache written
+      is the `huggingface_hub` layout — `snapshots/<commit>/…` symlinked into `blobs/<sha256>` — so a
+      Python cache and this one are interchangeable. `load()` on a cold cache refuses with the documented
+      message instead of downloading.
       *Finding from doing it: the checkpoint is **807.0 MiB**, not the 803 quoted throughout — 803.6 MiB
       is `model.safetensors` alone, and the download also carries 3.4 MiB of configs and tokenizer. The
-      user-facing docs now say 807 with the breakdown; the shorthand in code comments and test prose is
-      left alone (§10.12).*
+      user-facing docs say 807 with the breakdown; the shorthand in code comments and test prose is left
+      alone (§10.12).*
+      *And learned the hard way: a `npm i` on the machine that published the package proves nothing,
+      because the local npm cache serves tarballs the registry may not be serving yet. Both a cold cache
+      and a direct `curl` of the tarball are needed — see Phase 9.*
 - [x] The public surface is usable from TypeScript without escape hatches: `load`/`loadAsync`/
       `predict` and the answer types type-check under `strict` + `noUncheckedIndexedAccess`, and no
       exported signature returns `any`. It is a library, so its API is the product.
