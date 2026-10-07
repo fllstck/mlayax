@@ -20,12 +20,22 @@ LOG="${1:?usage: ci-annotate.sh <logfile> [label]}"
 LABEL="${2:-step}"
 LINES="${CI_ANNOTATE_LINES:-40}"
 
+# Optional `CI_ANNOTATE_PATTERN`: annotate the lines matching it instead of the tail. A test runner
+# prints its summary last, so the tail of a failing run is often just "3 fail" with the assertions far
+# above it — the pattern is how the interesting lines survive the trip into an annotation.
+PATTERN="${CI_ANNOTATE_PATTERN:-}"
+
 if [[ ! -f "$LOG" ]]; then
   echo "::warning::ci-annotate: no log at $LOG (the step may have failed before it wrote anything)"
   exit 0
 fi
 
-message="$(tail -n "$LINES" "$LOG")"
+if [[ -n "$PATTERN" ]]; then
+  message="$(grep -E "$PATTERN" "$LOG" | head -n "$LINES" || true)"
+  [[ -n "$message" ]] || message="(no line matched ${PATTERN}; tail follows)%0A$(tail -n 10 "$LOG")"
+else
+  message="$(tail -n "$LINES" "$LOG")"
+fi
 if [[ -z "$message" ]]; then
   echo "::warning::ci-annotate: $LOG is empty"
   exit 0

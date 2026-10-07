@@ -178,10 +178,7 @@ describe.skipIf(!nativeAvailable())(
     it("bfloat16 loads and agrees within its own precision", async () => {
       const { maxDelta } = await maxDeltaFor({ dtype: "bfloat16" as DTypeName });
       expect(maxDelta).toBeLessThanOrEqual(BFLOAT16_TOLERANCE);
-      // 30 s, not vitest's 5 s default: this is the slowest path in the suite on the CI runner (it
-      // timed out there) and the assertion is about agreement, not speed — speed is bench/gate.ts's
-      // business, on the reference machine, where it is measured against the baseline.
-    }, 30_000);
+    });
 
     it("answers the reference questions with a finite action probability under every option", async () => {
       // A cheap sweep for a NaN or a `null` creeping in through an option nobody exercises by default.

@@ -1472,7 +1472,27 @@ annotation says which GPU produced a delta, and the bf16 test's timeout is 30 s 
 slowest path in the suite on a runner (the assertion is about agreement, not speed — speed is
 `bench/gate.ts`'s business, on the reference machine, against the baseline).
 
-**Not yet explained**: `native-source` still fails in its mode-2 build, twice, both times inside MLX's
-own ~9-minute compile. This machine cannot reproduce it (CommandLineTools, no Metal toolchain — §10.11),
-so the job now `tee`s its output into an annotation instead: the next run's check run will say why,
-without anyone needing a token.
+**Then the same four tests failed as *timeouts*, which moved the diagnosis on again.** Next run:
+
+```text
+test/parity.tiny.test.ts:73  > fp32 is bit-exact                     Error: Test timed out in 5000ms
+test/parity.tiny.test.ts:101 > fp16 is within 4e-4                    Error: Test timed out in 5000ms
+test/mlx.options.test.ts:151 > pretranspose leaves every answer …     Error: Test timed out in 5000ms
+test/mlx.options.test.ts:168 > shapeless agrees within one rounding … Error: Test timed out in 5000ms
+```
+
+Not the same failure, the same *place*: a native test's first forward at a new sequence length
+JIT-compiles a Metal graph, and on the runner that exceeded vitest's 5000 ms default — while `pack`,
+which does the same first forward against the same fixture, passed in that run. Runner hardware varies
+between runs, which is why the identical four tests appeared once as boundary drift and once as
+timeouts. So the suite's timeout is now **60 s** (`vitest.config.ts`), stated as what it is: the default
+is a property of vitest, not of this workload, and a correctness suite should not encode a performance
+claim. `bun test` does not read `vitest.config.ts`, so the CI bun job passes `--timeout 60000`
+explicitly — a detail that only shows up because we run the suite under two runners.
+
+**Not yet explained**: `native-source` still fails in its mode-2 build, inside MLX's own ~9-minute
+compile. This machine cannot reproduce it (CommandLineTools, no Metal toolchain — §10.11), so the job now
+`tee`s its output into an annotation instead: the next run's check run will say why, without anyone
+needing a token. If mode 2 keeps failing, the choice is to fix it or to move that job to
+`workflow_dispatch` only — it is the §5 provenance experiment, and its stated acceptance criterion (the
+benchmark) already cannot run in CI without a checkpoint.

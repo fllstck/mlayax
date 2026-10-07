@@ -364,11 +364,17 @@ jobs:
       - name: bun test
         run: |
           set -o pipefail
-          bun test 2>&1 | tee "$RUNNER_TEMP/bun-test.log"
+          # `--timeout`: bun does not read vitest.config.ts, and its 5 s default is the same trap the
+          # vitest runs hit — the first forward at a new shape JIT-compiles a Metal graph.
+          bun test --timeout 60000 2>&1 | tee "$RUNNER_TEMP/bun-test.log"
 
       - name: report why bun test failed
         if: failure()
-        run: scripts/ci-annotate.sh "$RUNNER_TEMP/bun-test.log" "bun test"
+        run: |
+          # The summary is the last thing bun prints, so the tail alone would only show "N fail" — grep
+          # the failure lines out of the log instead.
+          CI_ANNOTATE_PATTERN='\((fail)\)|^error:|Expected:|Received:|timed out' \
+            scripts/ci-annotate.sh "$RUNNER_TEMP/bun-test.log" "bun test"
       - name: predict() under Bun, against the tiny fixture
         run: bun scripts/packed-parity.mjs
 
