@@ -24,7 +24,7 @@
 #   bun             macos-26 bun install + bun test + a real prediction under Bun
 #   pack            macos-26 packs both tarballs, runs publint/attw/size, installs the tarballs into a
 #                            clean room and answers a request from *that* install
-#   bench           opt-in (workflow_dispatch), needs the real ~803 MiB checkpoint
+#   bench           opt-in (workflow_dispatch), needs the real checkpoint (807 MiB, cached)
 #
 # Deliberately absent: coverage. `npm run test:coverage` cannot pass in any configuration (TASKS.md
 # §10.5 — `src/mlx` branch coverage is 73.8 % against an 85 % threshold), and a permanently red check
@@ -39,7 +39,7 @@ on:
   workflow_dispatch:
     inputs:
       bench:
-        description: Also run the benchmark gate (needs the ~803 MiB checkpoint)
+        description: Also run the benchmark gate (needs the 807 MiB checkpoint)
         type: boolean
         default: false
 
@@ -419,7 +419,7 @@ jobs:
           path: ${{ env.CHECKPOINT_CACHE }}
           key: checkpoint-${{ env.CHECKPOINT_REPO }}-v1
 
-      - name: fetch the checkpoint (~803 MiB, once per cache key)
+      - name: fetch the checkpoint (807 MiB, once per cache key)
         run: node scripts/fetch-checkpoint.mjs > /dev/null
 
       - name: bench gate

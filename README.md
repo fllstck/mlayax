@@ -47,7 +47,8 @@ on an M5. The full API — question construction, every option, the answer and `
 | [`@fllstck/mlayax-darwin-arm64`](packages/mlayax-darwin-arm64) | native payload: `node_mlx.node` + `libmlx.dylib` + `libjaccl.dylib` + `mlx.metallib` + `SHA256SUMS` + `VERSION` | 64.9 MiB tarball |
 
 The model weights are Apache-2.0 (Convai Innovations) and are **never bundled**: they are downloaded to
-the Hugging Face cache on first use (≈ 803 MiB, once) by `loadAsync`.
+the Hugging Face cache on first use (≈ 807 MiB once — 803 MiB of weights plus the configs and
+tokenizer) by `loadAsync`.
 
 ## Requirements
 
@@ -112,7 +113,7 @@ bun test                # the same suite under Bun
 npm run build           # tsc -b → packages/mlayax/dist
 npm run bench           # the benchmark harness (needs MLAYAX_MODEL_DIR)
 npm run bench:check     # the gate: p50 within 1.3x of bench/baseline.json, RSS under the ceiling
-npm run fetch:checkpoint  # download the ~803 MiB reference checkpoint, print its path
+npm run fetch:checkpoint  # download the reference checkpoint (807 MiB), print its path
 npm run check:packed    # parity against *installed* tarballs (--project <clean-room>)
 ```
 

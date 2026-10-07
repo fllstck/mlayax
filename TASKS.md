@@ -769,6 +769,24 @@ Post-publish:
 
 - [ ] `npm i @fllstck/mlayax` then `predict()` works on a clean machine (Node ≥ 22 and Bun ≥ 1.2),
       with the checkpoint downloaded once and cached.
+      **Everything except the registry half is verified** (2026-10-07): a scratch project with nothing
+      but the two packed tarballs installed — no workspace, no `MLAYAX_*` variables — does a cold
+      `loadAsync()` from `https://huggingface.co` into an empty `HF_HOME` (Node 24.15: 70.6 s;
+      Bun 1.3.13: 69.3 s), predicts the same answers in both runtimes and both directions of the
+      cache (Node's download read by Bun, and a second cold download done by Bun's own `fetch`), and
+      then answers identically through a sync, `offline: true` `load()`. (Node 22 is not on this
+      machine — the CI `unit`/`unit-macos` matrix covers the ≥ 22 floor for the suite and for
+      tiny-fixture parity; the download path itself is version-independent `fetch` + `fs`.)
+      The cache it writes is the
+      `huggingface_hub` layout — `snapshots/<commit>/…` symlinked into `blobs/<sha256>` — so a Python
+      cache and this one are interchangeable. `load()` on the cold cache refuses with the documented
+      message instead of downloading. What remains is the same test against the **registry** rather
+      than a tarball, which needs the packages published — it is Phase 9's pre-flight item, and the
+      `pack` CI job runs the tarball half on every push.
+      *Finding from doing it: the checkpoint is **807.0 MiB**, not the 803 quoted throughout — 803.6 MiB
+      is `model.safetensors` alone, and the download also carries 3.4 MiB of configs and tokenizer. The
+      user-facing docs now say 807 with the breakdown; the shorthand in code comments and test prose is
+      left alone (§10.12).*
 - [x] The public surface is usable from TypeScript without escape hatches: `load`/`loadAsync`/
       `predict` and the answer types type-check under `strict` + `noUncheckedIndexedAccess`, and no
       exported signature returns `any`. It is a library, so its API is the product.
@@ -800,7 +818,9 @@ Post-publish:
       MLX. (The floor is 26.2, not the 14 this file used to claim — §10.2.)
 - [ ] `CHANGELOG.md`, `docs/PORTING.md`, `docs/ECOSYSTEM.md` published; patch offer sent upstream.
       Written (Phase 8); the *published* half needs the tag, and the offer is a post-publish step of
-      Phase 9.
+      Phase 9. Nothing here is blocked on anything except `npm publish` and `git push`.
+      Note the `[0.1.0]` CHANGELOG heading says "unreleased" on purpose: Phase 9 stamps the date, so the
+      file cannot claim a release that has not happened.
 
 ---
 
@@ -1282,3 +1302,13 @@ One correction from writing that guard, because it is the opposite of the common
 `resolve`. So an absolute-looking repo path is contained rather than an escape, and the guard's comment
 says so instead of implying a rule it does not need. The first version of the test asserted the wrong
 behaviour and failed, which is how it was noticed.
+
+**And the checkpoint is 807 MiB, not 803.** Measuring the first-run download for §7 turned up the
+discrepancy: `803.6 MiB` is `model.safetensors` alone, and the download also carries `encoder/config.json`,
+the tokenizer, `mlx_config.json`, `manifest.json` and three licence/notice files — **807.0 MiB (846.2 MB)
+for 12 files**, which is what `loadAsync` transfers and what `du` reports as 819 MiB once block
+rounding is included. The number is now stated where a user reads it (both READMEs, the CI input
+that triggers the download) with the breakdown, and left as the 803 shorthand where it names the
+weights — comment prose in `hub.ts`, `agent.ts`, and three test files. Stating the download size
+accurately is not pedantry for a first-run experience: it is the one number a user has to plan disk
+for.

@@ -29,8 +29,8 @@ bun add @fllstck/mlayax
 
 Two packages arrive: this one (≈ 240 KiB unpacked) and the native payload (≈ 65 MiB, uncompressed
 213 MiB — it is mostly `mlx.metallib`). The model weights are **not** shipped: the checkpoint is
-downloaded to the Hugging Face cache on first use (**≈ 803 MiB**, once), and reused offline
-afterwards.
+downloaded to the Hugging Face cache on first use (**≈ 807 MiB** once — 803 MiB of weights plus the
+configs and tokenizer), and reused offline afterwards.
 
 ## Requirements
 
@@ -164,7 +164,7 @@ Limits worth knowing, all reported in `usage` rather than thrown:
 
 Synchronously load a checkpoint. `source` is a local directory or a repository id
 (`"aac6fef/laya-mlx"`). For a repository id it resolves the **local Hugging Face cache** and throws if
-there is none — it never downloads, so a call that looks synchronous cannot silently fetch 803 MiB.
+there is none — it never downloads, so a call that looks synchronous cannot silently fetch 807 MiB.
 
 ### `await loadAsync(source, options?)`
 
