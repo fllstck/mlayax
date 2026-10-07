@@ -1380,3 +1380,49 @@ that triggers the download) with the breakdown, and left as the 803 shorthand wh
 weights — comment prose in `hub.ts`, `agent.ts`, and three test files. Stating the download size
 accurately is not pedantry for a first-run experience: it is the one number a user has to plan disk
 for.
+
+### 10.13 CI's first run: the repository could not be installed on Linux at all
+
+Found by the first push, which is what the first push is for. Three ubuntu jobs failed at `npm ci`, and
+the reason was ours, not the runner's:
+
+```text
+npm error code EBADPLATFORM
+npm error notsup Unsupported platform for @fllstck/mlayax-darwin-arm64@0.1.0:
+       wanted {"os":"darwin","cpu":"arm64"} (current: {"os":"linux","cpu":"arm64"})
+```
+
+npm validates the `os`/`cpu` of a **workspace** (linking it is not optional the way a declared
+`optionalDependencies` entry is, and the lock records it as `optional: false`), where it skips a
+registry package whose platform does not match. So the darwin/arm64 payload, which is a workspace so
+that macOS dev, CI and the benchmarks resolve the *locally built* addon, made every Linux install fail
+before a single test ran. Note this was not CI-only: `npm install` on Linux failed identically, i.e. a
+Linux contributor could not set the repository up at all, and the README's instructions did not say so.
+
+Reproduced exactly in a Linux container (`node:24`, mounting a `git archive HEAD` of the CI checkout),
+and measured against every non-`--force` alternative that looked plausible:
+
+| command | result |
+|---|---|
+| `npm ci` | `EBADPLATFORM` |
+| `npm install` (what CONTRIBUTING says) | `EBADPLATFORM` |
+| `npm ci --omit=optional` | `EBADPLATFORM` — the workspace link is not optional (which is also why this did not help) |
+| `npm ci --os=linux --cpu=x64` | `EBADPLATFORM` — the override does not relax the check (a `--dry-run` locally *did* pass, which is how a wrong answer almost got written down) |
+| `npm ci --workspaces=false`, `--workspace=@fllstck/mlayax --include-workspace-root` | `EBADPLATFORM` |
+| **`npm ci --force`** | **207 packages, and the whole ubuntu job passes** |
+
+The fix is `npm ci --force` in the two Linux jobs, with the reason in the workflow, and a note in both
+READMEs for Linux contributors. `--force` is npm's documented escape hatch for installing on a platform
+a package declares unsupported; it is used for nothing else here, and the install is verified
+immediately afterwards by the same job (in the container: `biome ci` clean, `tsc -b`, `tsc -p
+ tsconfig.test.json`, `knip`, and 246 tests passing with the 73 native ones skipped).
+
+The alternative — dropping the platform package out of `workspaces` so it is only an
+`optionalDependencies` entry — fixes the install but costs something worse: macOS dev and CI would then
+resolve the **published** payload from the registry instead of the one just built, which is exactly the
+trap §10.11 is about (a green result from the wrong artifact). The workspace link is worth the flag.
+
+**What this entry does *not* explain**: the other CI failures from that run. The `native` job passed
+(so the payload builds and verifies on a runner), while `native-source` failed in its mode-2 build,
+both macOS unit jobs failed in the test step, and the `bun` and `pack` jobs failed after succeeding at
+install and build. Those need their step logs — see the note in Phase 7.

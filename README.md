@@ -124,6 +124,10 @@ npm run fetch:checkpoint  # download the reference checkpoint (807 MiB), print i
 npm run check:packed    # parity against *installed* tarballs (--project <clean-room>)
 ```
 
+*(On Linux, install with `npm install --force`: the darwin/arm64 payload is a workspace and npm
+validates a workspace's `os` where it skips a registry package's. Lint, types and the portable suite
+all work there — see TASKS.md §10.13.)*
+
 The native payload is built, not committed:
 
 ```bash

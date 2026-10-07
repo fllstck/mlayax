@@ -76,7 +76,14 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      # A Linux install needs --force, and the reason is ours rather than npm's: the darwin/arm64
+      # platform package is a workspace, and npm validates a *workspace's* `os`/`cpu` where it skips a
+      # registry package's — so `npm ci` dies with EBADPLATFORM before a single test runs. `--force` is
+      # the documented escape hatch for installing on a platform a package declares unsupported, it is
+      # used for nothing else in this workflow, and the install is verified by the tests right after.
+      # (The macOS jobs do not need it. Found by the first CI run; see TASKS.md §10.13.)
+      - name: npm ci (--force: the darwin-only workspace, see §10.13)
+        run: npm ci --force
       # §6 wants all three on every commit. `biome ci` is the non-writing variant: it fails on a
       # formatting difference instead of silently fixing it, so a dirty tree is a red build.
       - name: biome ci
@@ -102,7 +109,9 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm ci
+      # --force for the darwin-only workspace; see the note in `lint-typecheck` and TASKS.md §10.13.
+      - name: npm ci (--force: the darwin-only workspace, see §10.13)
+        run: npm ci --force
       # dist/ is built first on purpose: `test/public-surface.test.ts` asserts things about the
       # *emitted* declarations, and the mixing probe imports `dist/mlx/index.js` from a child process.
       - run: npm run build

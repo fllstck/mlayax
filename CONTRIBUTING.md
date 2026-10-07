@@ -15,6 +15,11 @@ bun test         # the same suite under Bun
 npm run verify   # biome ci && tsc -b && tsc -p tsconfig.test.json && vitest run && licences
 ```
 
+**On Linux, use `npm ci --force`** (or `npm install --force`): the darwin/arm64 platform package is a
+workspace, and npm validates a workspace's `os` where it skips a registry package's, so a plain install
+dies with `EBADPLATFORM` before anything runs. Everything else — lint, types, and the portable test
+suite — works on Linux, which is why CI runs them there. TASKS.md §10.13 has the measurement.
+
 The native payload is **not** committed (it is ~206 MiB, mostly `mlx.metallib`). Tests that need it skip
 themselves when it is absent, so the portable suite runs anywhere. To build it:
 
