@@ -26,8 +26,9 @@ const TARGETS = [
     // Resolved 2026-10-07 (Phase 8) by removing the cause rather than the cap: 113.4 KiB of that
     // budget was `*.map` files, and in the *installed* package they resolve to nothing. They carry
     // no `sourcesContent`, and their `sources` point at `../../src/**` — which the `files` allowlist
-    // does not ship. So the payload is now 237.5 KiB and the budget is §0's 300 KiB again, with 62
-    // KiB of real headroom (§10.12). To reverse: drop `"!dist/**/*.map"` from the package's `files`
+    // does not ship. So the payload was 237.5 KiB once the maps went, and is 252.9 KiB now that the
+    // READMEs and the JSDoc fixes are written — inside §0's 300 KiB, with ~47 KiB of real headroom.
+    // The maps are still gone; what grew was documentation, which is the trade §10.4 argues for. To reverse: drop `"!dist/**/*.map"` from the package's `files`
     // and raise this back to 360 KiB — but only together with actually shipping the sources, or the
     // maps stay dead weight.
     budgetBytes: 300 * 1024,

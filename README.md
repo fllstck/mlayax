@@ -44,7 +44,7 @@ trap — is in
 
 | package | contents | size |
 |---|---|---|
-| [`@fllstck/mlayax`](packages/mlayax) | TypeScript only: prompt construction, calibration, answer shaping, the MLX runtime layer (node-mlx's MIT JavaScript, vendored unmodified), Hugging Face fetcher, mixing guard | 237.5 KiB unpacked |
+| [`@fllstck/mlayax`](packages/mlayax) | TypeScript only: prompt construction, calibration, answer shaping, the MLX runtime layer (node-mlx's MIT JavaScript, vendored unmodified), Hugging Face fetcher, mixing guard | 252.9 KiB unpacked |
 | [`@fllstck/mlayax-darwin-arm64`](packages/mlayax-darwin-arm64) | native payload: `node_mlx.node` + `libmlx.dylib` + `libjaccl.dylib` + `mlx.metallib` + `SHA256SUMS` + `VERSION` | 64.9 MiB tarball |
 
 The model weights are Apache-2.0 (Convai Innovations) and are **never bundled**: they are downloaded to

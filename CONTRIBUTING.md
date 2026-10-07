@@ -15,7 +15,7 @@ bun test         # the same suite under Bun
 npm run verify   # biome ci && tsc -b && tsc -p tsconfig.test.json && vitest run && licences
 ```
 
-The native payload is **not** committed (it is ~213 MiB, mostly `mlx.metallib`). Tests that need it skip
+The native payload is **not** committed (it is ~206 MiB, mostly `mlx.metallib`). Tests that need it skip
 themselves when it is absent, so the portable suite runs anywhere. To build it:
 
 ```bash

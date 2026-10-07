@@ -87,7 +87,7 @@ without a download.
 
 | package | contents | size |
 |---|---|---|
-| `@fllstck/mlayax` | TypeScript only: prompt construction, calibration, answer shaping, the MLX runtime layer (node-mlx's MIT JavaScript, vendored unmodified), Hugging Face fetcher, mixing guard | 237.5 KiB unpacked |
+| `@fllstck/mlayax` | TypeScript only: prompt construction, calibration, answer shaping, the MLX runtime layer (node-mlx's MIT JavaScript, vendored unmodified), Hugging Face fetcher, mixing guard | 252.9 KiB unpacked |
 | `@fllstck/mlayax-darwin-arm64` | `node_mlx.node` (patched for MLX 0.32.3) + `libmlx.dylib` + `libjaccl.dylib` + `mlx.metallib` (wheel class, 190 MB) + `SHA256SUMS` + `VERSION` | 68.0 MB packed, 215.5 MB unpacked |
 
 Neither package has an install script, and neither bundles weights. The checkpoint downloads on first

@@ -19,7 +19,7 @@ weights.
 - **`@fllstck/mlayax`** — the façade: prompt construction, calibration, answer shaping, the Hugging
   Face fetcher, and the MLX runtime layer (node-mlx's MIT JavaScript, vendored unmodified).
   `load()` / `loadAsync()` / `predict()`, with `prepare()` and `forwardItems()` public as the seam for
-  caller-side batching. 237.5 KiB unpacked, ESM-only.
+  caller-side batching. 252.9 KiB unpacked, ESM-only.
 - **`@fllstck/mlayax-darwin-arm64`** — the native payload: `node_mlx.node` (patched for MLX 0.32.3),
   `libmlx.dylib`, `libjaccl.dylib`, `mlx.metallib` (wheel-class, 190 MB), `SHA256SUMS`, `VERSION`.
   64.9 MiB as a tarball. No install scripts; `os: darwin`, `cpu: arm64`.
@@ -79,7 +79,8 @@ Recorded so they are not re-derived. The long form of each is in
 - **Source maps are no longer published.** They were 113.4 KiB of the 360 KiB budget and, in the
   installed package, they resolve to nothing: their `sources` point at `src/**`, which the tarball does
   not carry, and they ship no `sourcesContent`. The payload dropped from 350.9 KiB to 237.5 KiB and the
-  budget returned to §0's original 300 KiB. They are still emitted for local use; the size gate refuses
+  budget returned to §0's original 300 KiB; writing these docs and the JSDoc fixes in the same phase
+  brought it back up to 252.9 KiB, still inside the budget with the maps still gone. They are still emitted for local use; the size gate refuses
   to let them back into the tarball without the sources. See §10.4 and §10.12.
 - **Two gates asserted things that could not be true.** `build.sh` compared a from-source payload
   against the wheel's provenance hashes, so every mode-2 build exited non-zero after building

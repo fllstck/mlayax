@@ -725,7 +725,7 @@ pre-flight result belongs to a commit and not to a plan. Four of the five pass:*
 | check | result |
 |---|---|
 | `npm run verify` | green (`biome ci`, `tsc -b`, `tsc -p tsconfig.test.json`, 319 tests, licences) |
-| `npm run verify:release` | green — `publint` clean for both packages, `attw` `--profile esm-only` (the one `CJSResolvesToESM` note is expected for an ESM-only package), size gate 237.5 KiB / 300 KiB and 64.87 MiB / 120 MiB, `--check` passed |
+| `npm run verify:release` | green — `publint` clean for both packages, `attw` `--profile esm-only` (the one `CJSResolvesToESM` note is expected for an ESM-only package), size gate passes (237.5 KiB / 300 KiB when first run, 252.9 KiB once the docs and JSDoc landed) and 64.87 MiB / 120 MiB, `--check` passed |
 | `npm run bench:check` | **pass**, and a real verdict rather than "inconclusive" because this is the baseline's CPU: 10.3 ms (1.01x), 15.1 ms (0.98x), 53.7 ms (0.91x), 298 q/s, RSS 987 MiB against a 1400 MiB ceiling |
 | `npm pack --dry-run` (native) | 68.0 MB packed / 215.5 MB unpacked, 13 files, all on the allowlist |
 | clean-room install | tarballs ✓ under Node and Bun (§7's first straggler); the **registry** half needs the packages published |
@@ -1297,7 +1297,11 @@ stack-trace path. That is not worth a third of the package.
 |---|---:|---:|
 | unpacked | 350.9 KiB (72 files) | **237.5 KiB** (42 files) |
 | `*.map` | 113.4 KiB, 30 files | 0 |
-| budget | 360 KiB (98 % used at one point, §10.4) | **300 KiB**, §0's original number, 26 % headroom |
+| budget | 360 KiB (98 % used at one point, §10.4) | **300 KiB**, §0's original number |
+
+The payload has since grown to **252.9 KiB** (still 42 files, still no maps) as these documents and the
+JSDoc fixes were written — 16 % of headroom left, and the growth is explained rather than mysterious,
+which is the whole point of §10.4's "the budget is a cap on how much the code is explained".
 
 The maps are still emitted for local work; only the tarball changed (`"!dist/**/*.map"` in `files`).
 `check-size.mjs` grew a `forbid` rule so the decision is enforced rather than described: a map that

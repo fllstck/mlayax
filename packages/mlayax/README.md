@@ -27,8 +27,8 @@ npm i @fllstck/mlayax
 bun add @fllstck/mlayax
 ```
 
-Two packages arrive: this one (≈ 240 KiB unpacked) and the native payload (≈ 65 MiB, uncompressed
-213 MiB — it is mostly `mlx.metallib`). The model weights are **not** shipped: the checkpoint is
+Two packages arrive: this one (≈ 253 KiB unpacked) and the native payload (≈ 65 MiB packed, 215 MB
+unpacked — it is mostly `mlx.metallib`). The model weights are **not** shipped: the checkpoint is
 downloaded to the Hugging Face cache on first use (**≈ 807 MiB** once — 803 MiB of weights plus the
 configs and tokenizer), and reused offline afterwards.
 
