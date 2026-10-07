@@ -15,8 +15,10 @@ Package: `@frost-beta/mlx` 0.4.0 · Licence: MIT (`./LICENSE`, © frost-beta)
 Only `core.js` is vendored. Upstream's `dist/` also contains `nn/`, `optimizers/` and `utils.js`
 (~400 KB, ~50 files) which the runtime never imports — the MLX ops we need are on the addon itself,
 and the one `nn` value the port used to thread through (`DecisionModel`'s constructor argument) was
-never read. Shipping 400 KB of dead JavaScript in the façade would be the opposite of the < 300 KB
-budget.
+never read. Shipping 400 KB of dead JavaScript in the façade would be the opposite of what the size
+budget is for. (The budget number lives in `scripts/check-size.mjs` and moves as the package grows — it
+is a guard against dead weight, not a target, so this file deliberately does not repeat it. TASKS.md
+§10.4 has the measurements.)
 
 If a future phase needs `nn` (for example a slimmed wrapper that uses `nn.Linear`), vendor it then
 and add it to this table.

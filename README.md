@@ -13,7 +13,7 @@ Two packages, published together:
 
 | package | contents |
 |---|---|
-| `@fllstck/mlayax` | TypeScript only: prompt construction, calibration, answer shaping, MLX runtime layer, request batching, HTTP service |
+| `@fllstck/mlayax` | TypeScript only: prompt construction, calibration, answer shaping, MLX runtime layer (vendored JS), Hugging Face fetcher, mixing guard |
 | `@fllstck/mlayax-darwin-arm64` | native payload: `node_mlx.node`, `libmlx.dylib`, `libjaccl.dylib`, `mlx.metallib`, `SHA256SUMS`, `VERSION` |
 
 The model weights (Apache-2.0, Convai Innovations) are **never bundled** — they are downloaded to

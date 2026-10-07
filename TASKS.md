@@ -146,9 +146,12 @@ and an exact pin in `optionalDependencies`.
 ## 4. Preparation: read before writing code
 
 - [x] Read `docs/PORTING.md` end to end (including the two retractions — they explain the numbers).
-- [ ] Read `packages/mlayax/src/mlx/model.ts` and `agent.ts`; note the comments that encode hazards.
+- [x] Read `packages/mlayax/src/mlx/model.ts` and `agent.ts`; note the comments that encode hazards.
       *(deferred to Phase 3, where the hazards get encoded as tests — read them while porting, not in
       isolation.)*
+      Done, and it paid: two comments in `model.ts` asserted something measurement later contradicted
+      (the `relu` docstring and the marker-gather note both claimed a float32 index makes the gather
+      reject it). See §8.2 and §10.7.
 - [x] Run the existing parity and bench in the old repo to see the reference behaviour:
       `node src/mlx/parity.ts fixtures/ref/fp16.json fixtures/ref/fp32.json` and `node src/mlx/bench.ts 10`.
       Reproduced 2026-10-06: fp32 **61/61 exact, Δ 0**, fp16 Δ 4.0e-4 (48/61 exact); 1 question
@@ -327,10 +330,11 @@ here with a described problem instead of producing a slightly different prompt.
       the "another `libmlx` is already resident" mixing guard need the shipped payload to compare
       against, so they stay in Phase 5 as §5 already says — the symbol check has a placeholder
       assertion that `fast.layerNorm` / `fast.rope` / `fast.scaledDotProductAttention` all exist.
-- [ ] Hugging Face loading (new work, see Phase 3b):
+- [x] Hugging Face loading (new work, see Phase 3b):
       `load("aac6fef/laya-mlx")` with disk cache, `HF_TOKEN`, `HF_HOME`, offline mode, revision pin,
       and per-file checksum verification. Weights are ~803 MiB and must never be bundled.
-      *Not done — this is the next item.*
+      *Done in Phase 3b — `src/hub.ts`, 25 tests in `test/hub.test.ts`, including the offline and
+      warm-cache paths. This item was left pointing at future work after 3b had completed it.*
 - [x] Acceptance: `load()` from a local directory and from the Hub cache both work; a single
       `predict()` returns the fixture answers; run it under Node and Bun.
       *Local directory: done and verified. Hub cache: **not yet** — that is Phase 3b, so half of this
@@ -534,14 +538,21 @@ redistributing MLX ourselves, which is exactly the provenance burden mode 1 exis
 
 ### Phase 6 — Tests: unit, integration, parity, bench
 
-- [ ] **Unit** (Phase 2) — no native, runs anywhere.
+- [x] **Unit** (Phase 2) — no native, runs anywhere. `src/core/**` is at 98.06 % statements /
+      95.4 % branches, over its 90 % gate.
 - [ ] **Parity (tiny fixture, default in CI, no download)**: build a synthetic checkpoint
       (`hidden_size 32`, 2 layers, small vocab, 1 head layer — see `ruby-laya`'s
       `tools/make_test_checkpoint.py` approach) with a matching tokenizer, publish it as a *test
       fixture* (checked in, few MB), and generate expected outputs from Python `laya_mlx`. Gate:
       fp32 bit-exact, fp16 within tolerance.
-- [ ] **Parity (real checkpoint, opt-in)**: `MLAYAX_MODEL_DIR=… vitest run -t parity` against
+      **The largest remaining test item.** `test/fixtures/tiny/` currently holds only the tokenizer,
+      so the default suite has nothing that exercises a forward pass. It is what would make CI
+      meaningful without a checkpoint.
+- [x] **Parity (real checkpoint, opt-in)**: `MLAYAX_MODEL_DIR=… vitest run -t parity` against
       `test/fixtures/ref/{fp16,fp32}.json`; gate fp32 **bit-exact**, fp16 Δ ≤ 4e-4.
+      Working: 238 tests pass with `MLAYAX_MODEL_DIR` set, including `fp32 is bit-exact`
+      (`maxDelta === 0`) and `fp16 is within 4e-4`. Gated off by default by design, so `npm run
+      verify` stays green without the checkpoint.
 - [x] **Integration**: batching equals solo; offline/cached loads; JSON-schema
       shape of the answer payload (and `answer_confidence` present — upstream emits it; `@johnhenry`
       omits it).
@@ -694,17 +705,31 @@ Post-publish:
 
 - [ ] `npm i @fllstck/mlayax` then `predict()` works on a clean machine (Node ≥ 22 and Bun ≥ 1.2),
       with the checkpoint downloaded once and cached.
-- [ ] The public surface is usable from TypeScript without escape hatches: `load`/`loadAsync`/
+- [x] The public surface is usable from TypeScript without escape hatches: `load`/`loadAsync`/
       `predict` and the answer types type-check under `strict` + `noUncheckedIndexedAccess`, and no
       exported signature returns `any`. It is a library, so its API is the product.
-- [ ] No service, no HTTP, no subpath export that implies one. `import { load } from
+      Verified: `tsc -b` and `tsc -p tsconfig.test.json` pass under the strict base config, and
+      `test/public-surface.test.ts` scans the emitted `.d.ts` for `any` so a later addition cannot
+      reintroduce one silently.
+- [x] No service, no HTTP, no subpath export that implies one. `import { load } from
       "@fllstck/mlayax"` is the whole story, and importing it must not load native code.
-- [ ] fp32 parity with Python `laya_mlx` is **bit-exact** on the real checkpoint; fp16 within 4e-4.
-- [ ] Bench is within 1.3x of the §2 reference numbers on comparable hardware.
-- [ ] `batched == solo` holds: the questions of one request answer identically whether forwarded
+      Verified: `test/public-surface.test.ts` — "exposes no service API" and "does not load native
+      code merely by being imported".
+- [x] fp32 parity with Python `laya_mlx` is **bit-exact** on the real checkpoint; fp16 within 4e-4.
+      Verified against the real checkpoint: `fp32 is bit-exact` asserts `maxDelta === 0`.
+- [x] Bench is within 1.3x of the §2 reference numbers on comparable hardware.
+      Verified by `npm run bench:check` on the reference machine: 10.2 ms (1.00x), 15.0 ms (0.97x),
+      53.3 ms (0.90x), RSS 987 MiB.
+- [x] `batched == solo` holds: the questions of one request answer identically whether forwarded
       together or one per forward.
-- [ ] No absolute paths, no venv references, no install scripts, no weights in any tarball.
-- [ ] Licences/notices present in both packages; README states the arm64/macOS/MLX constraints.
+      Verified: `test/parity.real.test.ts` — "answers the same in a batch as one at a time".
+- [x] No absolute paths, no venv references, no install scripts, no weights in any tarball.
+      Verified: `tools/native/build.sh --check` fails on an absolute rpath or a venv path string in
+      the shipped binaries, and neither package declares an install/prepack script (asserted by
+      `check:size`'s file allowlist and by `publint`).
+- [x] Licences/notices present in both packages; README states the arm64/macOS/MLX constraints.
+      Verified: `npm run check:licenses`, and both READMEs state arm64, macOS ≥ 26.2 and the pinned
+      MLX. (The floor is 26.2, not the 14 this file used to claim — §10.2.)
 - [ ] `CHANGELOG.md`, `docs/PORTING.md`, `docs/ECOSYSTEM.md` published; patch offer sent upstream.
 
 ---
@@ -713,8 +738,11 @@ Post-publish:
 
 1. **JS scalars upcast fp16 to fp32.** `mx.array(1)` is float32; mixing lifts the rest of the graph
    (~20 % cost, no error). Test: gelu/relu output dtype, and a bench ceiling.
-2. **`mx.maximum(intArray, 0)`** returns float32 and the gather then rejects it. Test: the marker
-   gather path with an int32 index tensor.
+2. **`mx.maximum(intArray, 0)`** returns float32. **Corrected 2026-10-06:** the consequence stated
+   here used to be "and the gather then rejects it". The upcast is real, but the rejection is
+   `mx.take`'s (`Indices must be integral`); `mx.takeAlongAxis` — the op the marker path uses — casts
+   float32 indices, eagerly and under `mx.compile`. So the marker gather was never at risk. Test: the
+   dtype of the clamp, and which op actually throws.
 3. **`mx.take(h, pos, 1)` with a `[b, count]` index prepends the batch dim.** Test: markers shape.
 4. **Disposing a just-cached attention mask** → crash on the next cache hit. Test: two identical
    forwards in a row, plus one with a different length.
@@ -725,12 +753,17 @@ Post-publish:
    `@rpath/libmlx.dylib` and die with a symbol mismatch. Test: the load-time guard; document it.
 7. **MLX build quality**: the metallib size class predicts throughput (190 MB fast vs 135–137 MB
    slow). Test: assert the shipped metallib sha256/size and gate on the bench.
+   Both halves are now real: `test/payload.test.ts` asserts the class from the bytes, and
+   `bench/gate.ts` is the throughput gate.
 8. **Prompt rendering regressions**: `labels` ignored for `noul` (the `@johnhenry` bug), labels
    rendered as `label: null` (our bug), Python JSON separators. Test: exact rendered strings **and**
    token ids from the frozen fixture tokenizer.
 9. **`mx.tidy` around `mx.asyncEval`** is unsafe; the asynchronous path must dispose its feeds
    explicitly. Test: repeated async forwards, assert no crash and stable RSS.
 10. **Rounding**: Python `round` is banker's; answer fields are 4-decimal. Test: tie values.
+    **This hazard was a real bug, not a documentation gap.** `round4` used `Number(x.toFixed(4))`,
+    which rounds ties *away from zero*; every odd multiple of `1/32` is an exact 4-decimal tie and
+    they disagreed. Fixed and mutation-checked — see §10.7.
 
 ---
 

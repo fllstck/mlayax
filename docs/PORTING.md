@@ -30,8 +30,10 @@ tensors:
 
 At the same MLX version the JS boundary cost only 5–7 % — so the 2x looked like a stale
 dependency, and rebuilding the binding for 0.32.3 was the obvious next step.
-`tools/build-node-mlx-mlx32.patch` + `tools/build-node-mlx-mlx32.sh` do exactly that: 14 files,
-242 added lines, against MLX 0.32.3. The changes are the API drift between 0.25 and 0.32:
+`tools/build-node-mlx-mlx32.patch` + `tools/build-node-mlx-mlx32.sh` do exactly that: **10** files,
+242 added lines, against MLX 0.32.3. (This said "14 files" until 2026-10-06; TASKS.md §10.1 records the
+correction. The count matters because it is the blast radius of an MLX bump.) The changes are the API
+drift between 0.25 and 0.32:
 
 - `fast::scaled_dot_product_attention` gained `sinks` and `force_fused`;
 - `Shape` became `SmallVector<int>`, so `Shape`/`SmallVector<long long>` need kizunapi converters
@@ -189,6 +191,12 @@ implemented in this binding, so it would mean C++ work); state-token and questio
 product feature); and the prefix cache in `prepared.py`.
 
 ## Service layer: request batching (worth 2.5x)
+
+> **Not shipped — kept as the technical record.** `batcher.ts` and `server.ts` were dropped in Phase 4:
+> this is a library, and a library cannot see its caller's concurrency. The numbers below are the
+> reason the seam stayed public (`prepare` → `forwardItems` → `shapeItems`), so a caller who needs
+> coalescing can build it without us shipping a server. They are measurements of the spike, not a
+> description of this package's API, and TASKS.md §2 lists the 2.5x gain as "not applicable".
 
 A one-row forward streams the whole 803 MiB of 2-D weights to answer 39 tokens, so a service that
 answers one question per forward pays that cost per question. `src/mlx/batcher.ts` gathers the
