@@ -49,6 +49,13 @@ published wheel hashes (mode 1), the `mlx.metallib` size class, the fused symbol
 CI runs these as eight jobs; [`.github/workflows/ci.yml`](.github/workflows/ci.yml) explains each one
 and why the macOS jobs pin `macos-26`.
 
+Two things about it are worth knowing before you touch it. **Linux jobs need `npm ci --force`** (the
+darwin-only workspace, §10.13). And a failed step's *log* needs a token to read while its *annotations*
+do not, so steps whose output is not a test assertion — builds, installs, predictions — pipe through
+`scripts/ci-annotate.sh`, which turns the tail of the log into an annotation. That is how the
+hardware-sensitive parity drift in §10.14 was diagnosed from outside the runner, and it is why a helper
+script exists for what looks like a five-line shell trick.
+
 ## House rules
 
 - **Numbers live in two READMEs, and they move together.** The performance table appears in

@@ -1426,3 +1426,53 @@ trap §10.11 is about (a green result from the wrong artifact). The workspace li
 (so the payload builds and verifies on a runner), while `native-source` failed in its mode-2 build,
 both macOS unit jobs failed in the test step, and the `bun` and `pack` jobs failed after succeeding at
 install and build. Those need their step logs — see the note in Phase 7.
+
+### 10.14 The tiny fixture's action head is hardware-sensitive, and four CI jobs said so at once
+
+Four failures in the first two CI runs — both macOS `unit` jobs, `bun`, and `pack` — turned out to be
+one finding. The error text comes from the check run's **annotations** (a failed step's log needs a
+token; its annotations do not, which is also why `scripts/ci-annotate.sh` now exists):
+
+```text
+test/parity.tiny.test.ts > fp32 is bit-exact
+AssertionError: three questions: 24 fields compared, 21 exact, max Δ 3.00e-4
+  department.action.act_probability: want 0.495 got 0.4947 (Δ3.00e-4)
+  urgency.action.act_probability:    want 0.5093 got 0.5092 (Δ1.00e-4)
+  refund.action.act_probability:     want 0.5715 got 0.5716 (Δ1.00e-4)
+```
+
+**The only fields that moved were `action.act_probability`.** `probabilities`, `choice`, `score`,
+`confidence` and `answer_confidence` were exact on the same run — every number the product actually
+reports. The measured drift is `3.0000000000002247e-4`, in the direction of a boundary: §10.9 already
+found this exact field moving by one 4-decimal step under batched-vs-solo reduction on this 32-dim,
+untrained fixture, because `act_head`'s first matmul has input width `D+4 = 36`. A different GPU family
+lowers that reduction differently, so the fixture's last decimal can land either side. The real
+checkpoint, where the parity claim is actually published, remains Δ 0 — it is the 32-dim model that is
+boundary-prone.
+
+So the *claims* were right and the *fixture* was over-claimed. §6's tolerances are unchanged for the
+real checkpoint (fp32 Δ 0, fp16 ≤ 4e-4); what changed is that the tiny fixture's bit-exactness is now
+asserted where it was measured:
+
+| | on the reference machine (M5) | anywhere else |
+|---|---|---|
+| `action.act_probability` | Δ 0 | ≤ **4e-4**, reported in the message |
+| every other field | Δ 0 | **Δ 0** — still a failure anywhere |
+| the *decisions* (`choice`, `score`, `noul`, `probabilities`) | exact | exact |
+| bf16 agreement | ≤ 2e-3 | ≤ 2e-3, with a 30 s timeout instead of vitest's 5 s |
+
+The policy lives in `test/helpers/machine.ts` (`driftForField`, tested on both branches without swapping
+hardware, including the exact measured value — the first bound written was `3e-4`, which the measured
+`3.0000000000002247e-4` would have failed again, so the bound carries one step of headroom). It was
+worth keeping the tests rather than skipping them off-reference: the fixture still proves the decisions
+and the probabilities on any GPU, which is the part a regression would break.
+
+Two follow-ons from the same run: the macOS jobs now print `sysctl -n machdep.cpu.brand_string`, so an
+annotation says which GPU produced a delta, and the bf16 test's timeout is 30 s because it is the
+slowest path in the suite on a runner (the assertion is about agreement, not speed — speed is
+`bench/gate.ts`'s business, on the reference machine, against the baseline).
+
+**Not yet explained**: `native-source` still fails in its mode-2 build, twice, both times inside MLX's
+own ~9-minute compile. This machine cannot reproduce it (CommandLineTools, no Metal toolchain — §10.11),
+so the job now `tee`s its output into an annotation instead: the next run's check run will say why,
+without anyone needing a token.

@@ -38,6 +38,12 @@ import type { DTypeName, LoadOptions, MlxAgent } from "../packages/mlayax/src/in
 // that is supposed to throw must not become a rejected promise vitest reports elsewhere.
 import { load } from "../packages/mlayax/src/index.js";
 import { resolveNativeAddonPath } from "../packages/mlayax/src/mlx/binding.js";
+import {
+  ACTION_PROBABILITY_DRIFT,
+  driftPolicy,
+  isReferenceMachine,
+  machineNote,
+} from "./helpers/machine.js";
 import { compare, loadReference } from "./helpers/scorecard.js";
 
 const FIXTURE = fileURLToPath(new URL("./fixtures/tiny", import.meta.url));
@@ -45,6 +51,18 @@ const REFERENCE = fileURLToPath(new URL("./fixtures/ref/tiny-fp32.json", import.
 
 /** One rounding step at 4 decimals, for the options that reorder an accumulation. */
 const ONE_ROUNDING_STEP = 1e-4;
+/**
+ * Off the reference machine, the same field that moves in the parity test gets the same measured
+ * allowance: 3 steps at 4 decimals, measured on the CI runner (TASKS.md §10.14). The field class is
+ * not loosened — `driftPolicy` grants it to `action.act_probability` only.
+ */
+const REORDERING_DRIFT = isReferenceMachine() ? ONE_ROUNDING_STEP : ACTION_PROBABILITY_DRIFT;
+/**
+ * And the bound for the six options documented as *bit-exact*: zero on the reference machine, the same
+ * measured action-head drift elsewhere. `differing` is counted with the same policy in force, so an
+ * option that moves a *different* field still fails on any machine.
+ */
+const BIT_EXACT_BOUND = isReferenceMachine() ? 0 : ACTION_PROBABILITY_DRIFT;
 /** bfloat16's honest bound: 2^-9 relative, observed at 8e-4 on this fixture. */
 const BFLOAT16_TOLERANCE = 2e-3;
 
@@ -71,7 +89,9 @@ async function maxDeltaFor(options: LoadOptions): Promise<{ maxDelta: number; di
   let differing = 0;
   for (const testCase of reference.cases) {
     const prediction = await agent.predict(testCase.state, testCase.questions);
-    const comparison = compare(testCase.answers, prediction.answers, Number.POSITIVE_INFINITY);
+    const comparison = compare(testCase.answers, prediction.answers, 0, {
+      driftForPath: driftPolicy(),
+    });
     maxDelta = Math.max(maxDelta, comparison.maxDelta);
     differing += comparison.mismatches.length;
     expect(
@@ -81,7 +101,6 @@ async function maxDeltaFor(options: LoadOptions): Promise<{ maxDelta: number; di
   }
   return { maxDelta, differing };
 }
-
 /**
  * A model directory identical to the fixture except for the JSON it is handed.
  *
@@ -134,7 +153,13 @@ describe.skipIf(!nativeAvailable())(
       // arranged (transposes held resident, a fused addmm, a padded length) without changing the order
       // of any accumulation. If one of them stops being exact, this names which.
       const { maxDelta, differing } = await maxDeltaFor(options);
-      expect(maxDelta, `${differing} field(s) differed`).toBe(0);
+      // `differing` counts fields beyond the drift this machine is allowed — the action head's, off the
+      // reference machine — so this pair is "nothing unexpected moved" *and* "nothing moved far".
+      expect(differing, `${differing} field(s) differed beyond the allowed drift`).toBe(0);
+      expect(
+        maxDelta,
+        `${machineNote()}: nothing but the action head may move`,
+      ).toBeLessThanOrEqual(BIT_EXACT_BOUND);
     });
 
     it.each([
@@ -147,13 +172,16 @@ describe.skipIf(!nativeAvailable())(
       // boundary — see test/parity.tiny.test.ts for the same effect in batched-vs-solo.
       const { maxDelta } = await maxDeltaFor(options);
       expect(maxDelta).toBeGreaterThan(0); // measured, not assumed: these are not bit-exact
-      expect(maxDelta).toBeLessThanOrEqual(ONE_ROUNDING_STEP);
+      expect(maxDelta).toBeLessThanOrEqual(REORDERING_DRIFT);
     });
 
     it("bfloat16 loads and agrees within its own precision", async () => {
       const { maxDelta } = await maxDeltaFor({ dtype: "bfloat16" as DTypeName });
       expect(maxDelta).toBeLessThanOrEqual(BFLOAT16_TOLERANCE);
-    });
+      // 30 s, not vitest's 5 s default: this is the slowest path in the suite on the CI runner (it
+      // timed out there) and the assertion is about agreement, not speed — speed is bench/gate.ts's
+      // business, on the reference machine, where it is measured against the baseline.
+    }, 30_000);
 
     it("answers the reference questions with a finite action probability under every option", async () => {
       // A cheap sweep for a NaN or a `null` creeping in through an option nobody exercises by default.

@@ -5,6 +5,11 @@
     "packages/mlayax": { "project": ["src/**/*.ts"] },
     "packages/mlayax-darwin-arm64": { "entry": ["package.json"], "project": [] }
   },
-  "ignoreFiles": ["bench/**", "tools/**", "test/helpers/mixing-probe.mjs"],
+  "ignoreFiles": [
+    "bench/**",
+    "tools/**",
+    "test/helpers/mixing-probe.mjs",
+    "scripts/ci-annotate.sh"
+  ],
   "ignoreBinaries": ["tools/native/build.sh"]
 }

@@ -43,13 +43,20 @@ export interface Comparison {
 /**
  * Compare `got` against `want` recursively.
  *
- * Numbers are compared with `tolerance`; everything else is compared by JSON equality, because the
- * only non-numeric fields in the answer payload are the question type and the chosen label, and both
- * must match exactly.
+ * Numbers are compared with `tolerance` (plus `options.driftForPath(path)` — see
+ * `test/helpers/machine.ts`); everything else is compared by JSON equality, because the only
+ * non-numeric fields in the answer payload are the question type and the chosen label, and both must
+ * match exactly.
  */
-export function compare(want: unknown, got: unknown, tolerance: number, path = ""): Comparison {
+export function compare(
+  want: unknown,
+  got: unknown,
+  tolerance: number,
+  options: { driftForPath?: (path: string) => number } = {},
+  path = "",
+): Comparison {
   const result: Comparison = { compared: 0, exact: 0, maxDelta: 0, mismatches: [], ok: true };
-  walk(want, got, tolerance, path, result);
+  walk(want, got, tolerance, options, path, result);
   result.ok = result.mismatches.length === 0;
   return result;
 }
@@ -58,11 +65,13 @@ function walk(
   want: unknown,
   got: unknown,
   tolerance: number,
+  options: { driftForPath?: (path: string) => number },
   path: string,
   result: Comparison,
 ): void {
   if (typeof want === "number") {
     result.compared += 1;
+    const allowed = tolerance + (options.driftForPath?.(path) ?? 0);
     if (typeof got !== "number") {
       result.mismatches.push(`${path}: want number ${want}, got ${JSON.stringify(got)}`);
       return;
@@ -70,7 +79,7 @@ function walk(
     const delta = Math.abs(want - got);
     if (delta > result.maxDelta) result.maxDelta = delta;
     if (delta === 0) result.exact += 1;
-    else if (delta > tolerance) {
+    else if (delta > allowed) {
       result.mismatches.push(`${path}: want ${want} got ${got} (Δ${delta.toExponential(2)})`);
     }
     return;
@@ -90,7 +99,7 @@ function walk(
   if (want !== null && typeof want === "object") {
     const gotRecord = (got ?? {}) as Record<string, unknown>;
     for (const [key, value] of Object.entries(want as Record<string, unknown>)) {
-      walk(value, gotRecord[key], tolerance, path === "" ? key : `${path}.${key}`, result);
+      walk(value, gotRecord[key], tolerance, options, path === "" ? key : `${path}.${key}`, result);
     }
     return;
   }

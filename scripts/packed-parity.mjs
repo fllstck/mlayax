@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * Parity smoke test against an *installed* copy of the package — TASKS.md §6, the `pack` job.
  *
@@ -28,6 +29,7 @@
  *     --dtype NAME      float32 | float16 (default: from the reference payload's `dtype`)
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -38,6 +40,38 @@ const repoRoot = path.resolve(here, "..");
 
 /** §2's tolerances. fp32 is bit-exact; fp16 is allowed to drift by 4e-4. */
 const TOLERANCE = { float32: 0, float16: 4e-4 };
+
+/**
+ * The one field that moves off the reference GPU, and by how much (TASKS.md §10.14).
+ *
+ * This script is a CI gate on a macOS runner, whose GPU family is not the M5 the fixture's Δ 0 was
+ * measured against: there `action.act_probability` moved by 3.0000000000002247e-4 while `probabilities`,
+ * `choice` and `confidence` stayed exact. Same policy as `test/helpers/machine.ts`, and it is only
+ * consulted away from the reference machine, so this stays a strict bit-exact check where the claim was
+ * measured. The bound carries one step of headroom above the measurement: a bound set exactly at it
+ * fails intermittently, and a flaky gate is worse than a slightly loose one.
+ */
+const ACTION_PROBABILITY_FIELD = "action.act_probability";
+const ACTION_PROBABILITY_DRIFT = 4e-4;
+const REFERENCE_CPU = "Apple M5";
+
+function isReferenceMachine() {
+  try {
+    const cpu = execFileSync("sysctl", ["-n", "machdep.cpu.brand_string"], {
+      encoding: "utf8",
+    }).trim();
+    return cpu === REFERENCE_CPU;
+  } catch {
+    return false;
+  }
+}
+
+function driftForPath(path, strict) {
+  if (strict) return 0;
+  return path === ACTION_PROBABILITY_FIELD || path.endsWith(`.${ACTION_PROBABILITY_FIELD}`)
+    ? ACTION_PROBABILITY_DRIFT
+    : 0;
+}
 
 /** `load()` takes `"float16"`/`"float32"`; the reference payloads record the same spelling. */
 const DTYPE_ALIASES = {
@@ -149,11 +183,12 @@ async function importPackageFrom(project) {
  * separate because this script must not import anything TypeScript or repository-relative: it runs
  * against a scratch install, not against this checkout.
  */
-function compare(want, got, tolerance) {
+function compare(want, got, tolerance, drift = () => 0) {
   const result = { compared: 0, exact: 0, maxDelta: 0, mismatches: [] };
   const walk = (a, b, level) => {
     if (typeof a === "number") {
       result.compared += 1;
+      const allowed = tolerance + drift(level);
       if (typeof b !== "number") {
         result.mismatches.push(`${level}: want number ${a}, got ${JSON.stringify(b)}`);
         return;
@@ -161,7 +196,7 @@ function compare(want, got, tolerance) {
       const delta = Math.abs(a - b);
       if (delta > result.maxDelta) result.maxDelta = delta;
       if (delta === 0) result.exact += 1;
-      else if (delta > tolerance) {
+      else if (delta > allowed) {
         result.mismatches.push(`${level}: want ${a} got ${b} (Δ${delta.toExponential(2)})`);
       }
       return;
@@ -200,6 +235,7 @@ if (!existsSync(options.reference)) {
 }
 
 const reference = JSON.parse(readFileSync(options.reference, "utf8"));
+const strict = isReferenceMachine();
 // An unrecognised `dtype` in the payload is not silently trusted: fp32 is the strict case, so that
 // is the safe fallback, and the reason is said out loud rather than inferred from a passing run.
 const recorded = DTYPE_ALIASES[reference.dtype];
@@ -232,7 +268,9 @@ let failed = 0;
 
 for (const testCase of reference.cases) {
   const prediction = await agent.predict(testCase.state, testCase.questions);
-  const result = compare(testCase.answers, prediction.answers, tolerance);
+  const result = compare(testCase.answers, prediction.answers, tolerance, (path) =>
+    driftForPath(path, strict),
+  );
   const label = `${testCase.label ?? "(unlabelled)"} (${dtype})`;
   const line =
     `  ${result.mismatches.length === 0 ? "ok  " : "FAIL"} ${label}: ` +
@@ -240,9 +278,15 @@ for (const testCase of reference.cases) {
   console.log(line);
   for (const mismatch of result.mismatches.slice(0, 20)) console.log(`       ${mismatch}`);
   if (result.mismatches.length > 20) console.log(`       … ${result.mismatches.length - 20} more`);
-  // "Δ 0" is a stronger claim than "nothing exceeded the tolerance", so fp32 asserts it directly.
-  if (tolerance === 0 && result.exact !== result.compared) {
-    console.log(`       fp32 must be bit-exact: ${result.compared - result.exact} field(s) moved`);
+  // "Δ 0" is a stronger claim than "nothing exceeded the tolerance", so fp32 asserts it directly —
+  // on the machine it was measured on. Elsewhere only the action head may move, by the measured
+  // drift, and anything else drifting has already shown up as a mismatch.
+  const exactness = strict ? 0 : ACTION_PROBABILITY_DRIFT;
+  if (tolerance === 0 && result.maxDelta > exactness) {
+    console.log(
+      `       fp32 must be bit-exact${strict ? "" : " up to the measured action-head drift"}: ` +
+        `${result.compared - result.exact} field(s) moved, max Δ ${result.maxDelta.toExponential(2)}`,
+    );
     failed += 1;
   } else if (result.mismatches.length > 0) {
     failed += 1;

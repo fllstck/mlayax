@@ -83,7 +83,13 @@ jobs:
       # used for nothing else in this workflow, and the install is verified by the tests right after.
       # (The macOS jobs do not need it. Found by the first CI run; see TASKS.md §10.13.)
       - name: npm ci --force (darwin-only workspace; TASKS.md 10.13)
-        run: npm ci --force
+        run: |
+          set -o pipefail
+          npm ci --force 2>&1 | tee "$RUNNER_TEMP/npm-ci.log"
+
+      - name: report why npm ci failed
+        if: failure()
+        run: scripts/ci-annotate.sh "$RUNNER_TEMP/npm-ci.log" "npm ci"
       # §6 wants all three on every commit. `biome ci` is the non-writing variant: it fails on a
       # formatting difference instead of silently fixing it, so a dirty tree is a red build.
       - name: biome ci
@@ -111,7 +117,13 @@ jobs:
           cache: npm
       # --force for the darwin-only workspace; see the note in `lint-typecheck` and TASKS.md §10.13.
       - name: npm ci --force (darwin-only workspace; TASKS.md 10.13)
-        run: npm ci --force
+        run: |
+          set -o pipefail
+          npm ci --force 2>&1 | tee "$RUNNER_TEMP/npm-ci.log"
+
+      - name: report why npm ci failed
+        if: failure()
+        run: scripts/ci-annotate.sh "$RUNNER_TEMP/npm-ci.log" "npm ci"
       # dist/ is built first on purpose: `test/public-surface.test.ts` asserts things about the
       # *emitted* declarations, and the mixing probe imports `dist/mlx/index.js` from a child process.
       - run: npm run build
@@ -227,14 +239,18 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      # The payload lands where the resolver looks for it: `@fllstck/mlayax-darwin-arm64/lib`, reached
-      # through the workspace symlink. Nothing is passed in the environment — that is the point, the
-      # resolution order under test is the published one.
+      # Which machine ran this. The parity suite's allowances are keyed to the reference CPU
+      # (test/helpers/machine.ts, TASKS.md §10.14), so a log that names the GPU answers "was that the
+      # reference machine?" without anyone having to guess from a delta.
+      - run: sysctl -n machdep.cpu.brand_string
       - name: install the native payload
         uses: actions/download-artifact@v4
         with:
           name: mlayax-darwin-arm64-payload
           path: packages/mlayax-darwin-arm64
+      # The payload lands where the resolver looks for it: `@fllstck/mlayax-darwin-arm64/lib`, reached
+      # through the workspace symlink. Nothing is passed in the environment — that is the point, the
+      # resolution order under test is the published one.
       - run: npm ci
       - run: npm run build
       - name: unit + tiny-fixture parity (fp32 bit-exact, fp16 within 4e-4)
@@ -271,12 +287,20 @@ jobs:
       # source build must not be able to overwrite it. `--check` then reads build_mode from VERSION and
       # asserts what is meaningful for a source build (SHA256SUMS, symbols, rpath, floor) instead of
       # failing on §2's wheel hashes, which a from-source payload can never match (§10.11).
+      # The build is where mode 2 can go wrong in ways that say nothing from the outside (MLX's own
+      # 9-minute compile), and a failed step's log needs a token to read while its annotations do not —
+      # so the output is kept and turned into an annotation if this fails.
       - name: build the payload from source
         run: |
+          set -o pipefail
           tools/native/build.sh \
             --mode source \
             --work "$NATIVE_WORK_SOURCE" \
-            --out "$RUNNER_TEMP/source-payload"
+            --out "$RUNNER_TEMP/source-payload" 2>&1 | tee "$RUNNER_TEMP/native-source.log"
+
+      - name: report why the source build failed
+        if: failure()
+        run: scripts/ci-annotate.sh "$RUNNER_TEMP/native-source.log" "native-source build"
 
       - name: verify the payload (source-mode invariants)
         run: tools/native/build.sh --check --out "$RUNNER_TEMP/source-payload"
@@ -338,7 +362,13 @@ jobs:
       - name: bun run build
         run: bun run build
       - name: bun test
-        run: bun test
+        run: |
+          set -o pipefail
+          bun test 2>&1 | tee "$RUNNER_TEMP/bun-test.log"
+
+      - name: report why bun test failed
+        if: failure()
+        run: scripts/ci-annotate.sh "$RUNNER_TEMP/bun-test.log" "bun test"
       - name: predict() under Bun, against the tiny fixture
         run: bun scripts/packed-parity.mjs
 
@@ -391,8 +421,17 @@ jobs:
 
       # Answers a real request through the installed package *and* the installed payload, and prints
       # which files it used. fp32 bit-exact against the same reference the test suite uses.
+      # Predictions and installs fail with an exit code and nothing else in the annotation, so both are
+      # captured. (Vitest asserts on their way out already, which is why the test steps are not wrapped.)
       - name: predict() from the packed artifact
-        run: node "$GITHUB_WORKSPACE/scripts/packed-parity.mjs" --project "$RUNNER_TEMP/clean-room"
+        run: |
+          set -o pipefail
+          node "$GITHUB_WORKSPACE/scripts/packed-parity.mjs" --project "$RUNNER_TEMP/clean-room" 2>&1 |
+            tee "$RUNNER_TEMP/packed-parity.log"
+
+      - name: report why the packed prediction failed
+        if: failure()
+        run: scripts/ci-annotate.sh "$RUNNER_TEMP/packed-parity.log" "packed-artifact predict"
 
       # SHA256SUMS lists bare filenames (it is written by `shasum` from inside lib/), so it is checked
       # from there — the same way `build.sh --check` does it.

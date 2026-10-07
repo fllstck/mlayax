@@ -81,7 +81,9 @@ custom `noul` labels), 61 numeric fields per dtype:
 | fp16 | Δ ≤ 4e-4 (48/61 fields exact) |
 
 The same parity is asserted in CI against a synthetic checkpoint committed as a fixture, so it runs
-without a download.
+without a download: there the decisions and probabilities are exact on any GPU, and the action head is a
+machine-sensitive last decimal (Δ 0 on the reference machine, ≤ 4e-4 elsewhere — see §10.14 of the
+repository's TASKS.md). The numbers above are the real checkpoint on the reference machine.
 
 ### What arrives, and what does not
 
