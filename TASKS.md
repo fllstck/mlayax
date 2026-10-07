@@ -73,6 +73,8 @@ Supporting material to copy as-is:
 - `src/mlx/profile3.ts` → `tools/reference/` *(`profile3` is a `.ts` under the spike's `src/mlx/`,
   not a `tools/profile*.py`; and `tools/tune.sh` came along too as `tools/reference/tune.sh`)*
 - `src/mlx/batchscale.ts`, `src/mlx/servebench.ts`, `src/mlx/varibench.ts` → `bench/`
+  *(and `src/mlx/bench.ts` → `bench/bench.ts`, which §1 omitted entirely — see §10.6. `servebench.ts`
+  was not kept: it drives the batcher that Phase 4 dropped.)*
 - `PORTING.md` → becomes `docs/PORTING.md` (the technical record; keep the corrections section)
 
 ---
@@ -543,9 +545,27 @@ redistributing MLX ourselves, which is exactly the provenance burden mode 1 exis
 - [ ] **Integration**: batching equals solo; offline/cached loads; JSON-schema
       shape of the answer payload (and `answer_confidence` present — upstream emits it; `@johnhenry`
       omits it).
-- [ ] **Bench gates** (`npm run bench:check`, macOS only, opt-in): p50 within 1.3x of
+- [x] **Bench gates** (`npm run bench:check`, macOS only, opt-in): p50 within 1.3x of
       `bench/baseline.json` for 1 question / 3 questions / 16 rows; fail on > 2x. Baselines from
       §2's table, refreshed deliberately with a note in `CHANGELOG.md`.
+      **Done, and measured.** `bench/bench.ts` is the harness (ported from the spike's `bench.ts`,
+      which §1 had omitted — see §10.6), `bench/baseline.json` carries §2's three numbers plus the
+      reference machine and the method, `bench/gate.ts` runs the harness in a **child process** and
+      judges it.
+      On the reference machine, all three cases **beat** the baseline: 10.6 ms (1.04x), 15.3 ms
+      (0.99x), 53.5 ms (0.91x), RSS 987 MiB, 299 q/s. Bun reports the *identical* 10.8 / 15.3 /
+      53.7 ms — the JS-boundary cost is nil, which is one of §2's premises and is now checked rather
+      than assumed.
+      The gate's refusal paths were verified, because a gate that cannot fail is decoration:
+      no `MLAYAX_MODEL_DIR` → exit 1 with the reason; no build → exit 1 telling you to build; a
+      simulated 4x regression → `FAIL > 2x` on all three cases, exit 1; a simulated 1.4x regression →
+      pass *with* the warning, exit 0. `MLAYAX_BENCH_BASELINE` points the gate at a candidate baseline,
+      which is both how a new baseline is evaluated before it lands and how the thresholds are tested.
+      Two deliberate refusals to judge: a **different CPU** yields "inconclusive, not judged" rather
+      than a verdict, because 1.3x is a claim about comparable hardware (§2); and a missing
+      checkpoint is an error, not a silent pass.
+      `bench/batchscale.ts` was also repaired and re-run: it reproduces §2's plateau independently
+      (803 MiB of weights; 301 → 322 q/s from 8 rows up, per-row cost settling at ~3.1 ms).
 - [ ] **Negative/regression tests** for the hazards listed in §8. The load-time half of §8.6 (the
       mixing guard) is done — `src/mlx/mixing.test.ts` (51 tests, runs anywhere) and
       `test/mlx.mixing.test.ts` (8 tests, real collisions in child processes) — but the rest of the
@@ -597,6 +617,9 @@ Pre-flight (all must be green):
 - [ ] `npm run verify` (biome + tsc + vitest) — green.
 - [ ] `npm run verify:release` — additionally: `publint`, `attw`, size check, `otool`/rpath check,
       `SHA256SUMS` regeneration + verification, `VERSION` consistency, symbol check, mixing guard test.
+- [ ] `npm run bench:check` with `MLAYAX_MODEL_DIR` set — §7 requires the bench to be within 1.3x,
+      and this is the only place it is checked. Expect "inconclusive" rather than a pass if the
+      release machine is not the baseline's CPU (§6).
 - [ ] `npm pack --dry-run --workspace @fllstck/mlayax-darwin-arm64` → confirm files + size
       (< ~120 MiB compressed; note npm rejects around 200 MB with HTTP 413).
 - [ ] Clean-room install test: in a scratch dir, `npm i <tarball-dir>` and
@@ -858,3 +881,29 @@ green is the wrong direction, and 85 % is a defensible target for `src/mlx` — 
 Phase 6 owns closing it, and the honest fix is tests for those fallback branches (which §8's hazard
 list wants anyway), not a smaller number. Until then, `verify` and `verify:release` do not run
 coverage, so the release path is unaffected; `npm run test:coverage` reports the real state.
+
+### 10.6 §1 omitted the bench harness, and `bench/` was dead code until the gate existed
+
+§1's source-material table lists three files for `bench/`: `batchscale.ts`, `servebench.ts` and
+`varibench.ts`. The fourth is the one that matters — **`src/mlx/bench.ts`, the harness that produced
+§2's three numbers**. It prints, verbatim, `one short question: p50`, `3 questions: p50`,
+`16-question batch: … q/s`. Its absence is why Phase 6's bench gate had no starting point, and it is
+the same class of omission as the lost `fix_overloads.py` in §10.1: the numbers in §2 survived into
+the repository, but the tool that produced them did not.
+
+Copying the three listed files "as-is" also left `bench/` non-functional, which nobody noticed because
+nothing ran it:
+
+| problem | detail |
+|---|---|
+| imports that cannot resolve | all three imported `./agent.ts`, which does not exist here; the entry point is `packages/mlayax/dist/index.js`. `batchscale.ts` imported `@frost-beta/mlx`, a package we deliberately do not depend on. |
+| an API the port renamed | `MlxAgent.load(...)` and `agent.systemOne(...)` are the spike's names; this package has `load(...)` and `agent.predict(...)`. |
+| environment variables that do not exist | `LAY A_MODEL_DIR`, `LAY A_COMPILE`, `LAY A_LENGTH_BUCKET`, `LAY A_TIDY`. The package's are `MLAYAX_MODEL_DIR` and `MLAYAX_SHAPELESS`; the bench-specific knobs are now `MLAYAX_BENCH_*`, documented in the file headers. |
+| a type error the spike never hit | `batchscale.ts` declared `const rows: number[] = []` and then pushed objects into it. |
+| a benchmark of a dropped feature | `servebench.ts` drives the cross-request batcher and imports `./batcher.ts`. Phase 4 dropped both, so it was **deleted** rather than ported. |
+
+Two changes make that class of breakage visible next time. `bench/**/*.ts` is now in
+`tsconfig.test.json`, so `npm run typecheck` covers it — and it immediately caught three real errors
+in the ported code (`mx.zeros` is not on `MlxCore`, a `globalThis as { Bun }` cast that cannot
+overlap, an unchecked index). And `bench/gate.ts` actually runs the harness, so a harness that cannot
+run fails a gate instead of sitting in the tree looking like tooling.

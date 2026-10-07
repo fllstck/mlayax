@@ -9,5 +9,5 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["packages/*/src/**/*.test.ts", "test/**/*.ts", "vitest.config.ts"]
+  "include": ["packages/*/src/**/*.test.ts", "test/**/*.ts", "bench/**/*.ts", "vitest.config.ts"]
 }

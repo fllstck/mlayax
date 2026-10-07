@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "Reference latency for the three cases in TASKS.md §2, and the machine they were measured on.",
+    "",
+    "These are not aspirational targets. Each is a measurement of the Python reference implementation",
+    "port that this package is a port of, reproduced by the spike (§4) and re-measured on the shipped",
+    "payload. Gate tolerances are §6's: warn above 1.3x, fail above 2x.",
+    "",
+    "Refresh deliberately, never automatically: change a number only with a new measurement on a",
+    "comparable machine, and note the change in CHANGELOG.md (§6). A baseline that drifts to match",
+    "whatever the code does is not a gate."
+  ],
+  "referenceMachine": {
+    "cpu": "Apple M5",
+    "os": "26.6.2",
+    "node": "24.15.0",
+    "bun": "1.3.13",
+    "_comment": "The gate flags a mismatch instead of comparing silently — 1.3x is only meaningful on comparable hardware."
+  },
+  "method": {
+    "dtype": "float16",
+    "state": "I was billed twice. Please refund the duplicate today.",
+    "iterations": 10,
+    "statistic": "p50 over 10 samples after one warm-up call per shape",
+    "_comment": "§2's 16-row figure was a single call. The gate takes a p50; the 1.3x tolerance covers the difference in method."
+  },
+  "source": "TASKS.md §2 (measured 2026-10-06; §4 reproduced it as 10.1 / 15.0 / 58.6 ms)",
+  "cases": {
+    "oneQuestion": { "baselineMs": 10.2, "what": "one short `choice` question" },
+    "threeQuestions": { "baselineMs": 15.4, "what": "a choice, a score and a noul question" },
+    "sixteenRows": { "baselineMs": 59.1, "what": "16 noul rows in one forward (~271 q/s)" }
+  },
+  "tolerance": { "warnRatio": 1.3, "failRatio": 2.0 },
+  "rssMiB": { "baseline": 1000, "ceiling": 1400 }
+}

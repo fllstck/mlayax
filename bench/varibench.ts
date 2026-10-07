@@ -2,21 +2,31 @@
  * Variable-length traffic: what does compiled inference cost when the sequence length keeps
  * changing? Reports the cold call (trace) and the warm call for each of many distinct states.
  *
- *   node src/mlx/varibench.ts [distinct-states]
+ *   MLAYAX_MODEL_DIR=/path/to/english-mlx node bench/varibench.ts [distinct-states]
  *
- * LAYA_COMPILE=1, LAYA_LENGTH_BUCKET=32 to compare configurations.
+ * Not a gate — the gate is `bench/gate.ts` (§6). This is the harness because of which §9's `compile`
+ * decision is "specialized by default, shapeless behind MLAYAX_SHAPELESS=1": it is the one that
+ * measures the trade-off. Set MLAYAX_SHAPELESS=1 to compare against the shapeless profile, and
+ * MLAYAX_BENCH_LENGTH_BUCKET=32 or MLAYAX_BENCH_TIDY=0 to compare the other options.
+ *
+ * Ported from the spike's `src/mlx/varibench.ts`; the API calls and environment variable names are
+ * this package's.
  */
 
-import { MlxAgent } from "./agent.ts";
+import { load } from "../packages/mlayax/dist/index.js";
 
 const states = Number(process.argv[2] ?? 12);
 const env = process.env;
 
-const agent = MlxAgent.load(env.LAYA_MODEL_DIR ?? "models/english-mlx", {
+const modelDir = env.MLAYAX_MODEL_DIR;
+if (modelDir === undefined || modelDir === "") {
+  throw new Error("MLAYAX_MODEL_DIR is not set — this harness needs the real checkpoint.");
+}
+const lengthBucket = env.MLAYAX_BENCH_LENGTH_BUCKET ? Number(env.MLAYAX_BENCH_LENGTH_BUCKET) : 0;
+const agent = load(modelDir, {
   dtype: "float16",
-  tidy: true,
-  compile: env.LAYA_COMPILE === "1",
-  lengthBucket: env.LAYA_LENGTH_BUCKET ? Number(env.LAYA_LENGTH_BUCKET) : 0,
+  tidy: env.MLAYAX_BENCH_TIDY !== "0",
+  lengthBucket,
 });
 
 const question = {
@@ -38,25 +48,25 @@ const warm: number[] = [];
 for (let i = 0; i < states; i++) {
   const state = makeState(i);
   let t = performance.now();
-  await agent.systemOne(state, question);
+  await agent.predict(state, question);
   cold.push(performance.now() - t);
   t = performance.now();
-  await agent.systemOne(state, question);
+  await agent.predict(state, question);
   warm.push(performance.now() - t);
 }
 const med = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
-  return Number(s[Math.floor(s.length / 2)].toFixed(2));
+  return Number((s[Math.floor(s.length / 2)] ?? Number.NaN).toFixed(2));
 };
 const sum = (xs: number[]) => Number(xs.reduce((a, b) => a + b, 0).toFixed(1));
-const cacheKey = performance.now();
 
 console.log(
   JSON.stringify({
     config:
       [
-        env.LAYA_COMPILE === "1" ? "compile" : "eager",
-        env.LAYA_LENGTH_BUCKET ? `bucket=${env.LAYA_LENGTH_BUCKET}` : "",
+        env.MLAYAX_SHAPELESS === "1" ? "shapeless" : "specialized",
+        lengthBucket > 0 ? `bucket=${lengthBucket}` : "",
+        env.MLAYAX_BENCH_TIDY === "0" ? "eager-dispose" : "",
       ]
         .filter(Boolean)
         .join("+"),
