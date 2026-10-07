@@ -741,20 +741,54 @@ the numbers against the tagged commit first, because a release note is a claim.
 
 Publish (manual, in this order — platform package first):
 
-- [ ] `npm login` (2FA on the `@fllstck` scope/org; verify the scope exists and you own it).
-- [ ] `npm publish --workspace @fllstck/mlayax-darwin-arm64 --access public`
+- [x] `npm login` (2FA on the `@fllstck` scope/org; verify the scope exists and you own it).
+      Verified: `npm whoami` → `kay-is`, and `npm access list packages` lists `@fllstck/mlayax` and
+      `@fllstck/mlayax-darwin-arm64` as `read-write`.
+- [x] `npm publish --workspace @fllstck/mlayax-darwin-arm64 --access public` — **live and correct**.
+      The PUT needed two retries (`ERR_SSL_SSL/TLS_ALERT_BAD_RECORD_MAC`, then `401`, then npm's browser
+      web-auth fallback; the retry was a `200` over 42 s for 68 MB). Verified from the registry rather
+      than from the install: `curl` of the tarball returns 200 with **68 024 959 bytes, byte-identical to
+      our `npm pack`** (shasum `4cc851ec1d35b9bcac9132ec8b898e7e5431ee7c`), 13 files, `SHA256SUMS`
+      verifies against the installed payload, `VERSION` says `wheel-class`/`prebuilt`/`min_macos=26.2`,
+      and the addon computes `sum([1,2,3]) = 6`.
 - [ ] `npm publish --workspace @fllstck/mlayax --access public`
       (exact `optionalDependencies` pin `"@fllstck/mlayax-darwin-arm64": "0.1.0"`; the native package
       must exist before the façade is installed by anyone).
+      **Accepted but not yet served.** The `PUT` returned `202` (queued) and the packument now advertises
+      `latest: 0.1.0` with 42 files / 258 964 bytes unpacked — but a brand-new package name goes through
+      npm's **staged release**, and until the review completes the name is held by a `0.0.0-stage`
+      placeholder and the real tarball **404s**. Watch it with:
+
+      ```bash
+      curl -sIL -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/@fllstck/mlayax/-/mlayax-0.1.0.tgz
+      ```
+
+      **And verify it cold, never on this machine.** A `npm i @fllstck/mlayax` here *succeeds*, because
+      we published from this machine and the npm cache serves the tarball the registry does not have
+      yet — an install that looks green in the middle of a failed publish. The honest check is a scratch
+      directory with an empty cache:
+
+      ```bash
+      npm i @fllstck/mlayax --cache /tmp/fresh-cache --prefer-online --no-audit
+      ```
 - [ ] Verify: `npm view @fllstck/mlayax version dependencies optionalDependencies dist.unpackedSize`.
+      Partly done: `optionalDependencies` pins `0.1.0`, the `dist` metadata agrees with our build
+      (`fileCount` 42, no `.map` entries), and the published `dist/**` is byte-identical to
+      `packages/mlayax/dist` once the local-only maps are excluded. Still open until the tarball serves.
 - [ ] Verify a fresh install from the *registry* on Node and Bun (not from a tarball), run a
       prediction, then `node_modules/@fllstck/mlayax-darwin-arm64` present and `SHA256SUMS` valid.
+      The Node half passed **against the cache** and reproduced the documented example exactly
+      (`billing 0.9587`, `score 1.3603`, `noul 0.8215`, `confidence 0.8175`); Bun failed with a 404 on the
+      tarball, which is the same staged-release 404 as above. Re-run both, cold, when it flips.
 - [ ] Note in the release notes: published manually, so the tarballs carry **no npm provenance**
       attestation (that requires CI + OIDC). If provenance is wanted later, add a release workflow.
+      The note is already written in `docs/release-notes-0.1.0.md`.
 
 GitHub:
 
 - [ ] Create `fllstck/mlayax` (public), push `main`, then tag `v0.1.0` matching `package.json`.
+      Repository created and `main` pushed; no tag yet, and one commit is still local. Tag once the
+      façade's tarball is served, so the tag does not advertise an install that 404s.
 - [ ] GitHub release `v0.1.0` with the CHANGELOG entry, the performance table, and the compatibility
       matrix; link the HF checkpoints and the upstream projects. The body is already written —
       [`docs/release-notes-0.1.0.md`](docs/release-notes-0.1.0.md), paste it as-is. It carries the

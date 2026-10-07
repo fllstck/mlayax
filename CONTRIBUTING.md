@@ -119,6 +119,29 @@ Manual, in the order given in [`TASKS.md`](TASKS.md) §5 Phase 9: platform packa
 façade, then the registry-install check on both Node and Bun. `npm run verify:release` and
 `npm run bench:check` are pre-flight, not optional.
 
+Two things about npm that cost a release an afternoon, both worth knowing before you start:
+
+- **A brand-new package name goes through a staged release.** After `npm publish` returns `202`, the
+  packument can advertise `latest: <your version>` while the name is still held by a `0.0.0-stage`
+  placeholder and the real tarball answers `404`. Nothing is broken and nothing needs re-publishing;
+  the version appears when the review completes. Check the *tarball*, not the metadata:
+
+  ```bash
+  curl -sIL -o /dev/null -w '%{http_code}\n' https://registry.npmjs.org/@fllstck/mlayax/-/mlayax-0.1.0.tgz
+  ```
+
+- **Never verify a publish from the machine that published it.** `npm i` there succeeds from the local
+  cache, which is holding the tarball you just uploaded — so a green install can sit on top of a
+  release the registry is not serving yet. A scratch directory with an empty cache is the honest test:
+
+  ```bash
+  npm i <name> --cache /tmp/fresh-cache --prefer-online --no-audit
+  ```
+
+Also expect the upload of the 68 MB platform package to be slow (tens of seconds) and to need npm's
+browser 2FA step; an `ERR_SSL_SSL/TLS_ALERT_BAD_RECORD_MAC` mid-upload is npm retrying, not a lost
+release.
+
 ## Security
 
 See [`SECURITY.md`](SECURITY.md) — that file also lists the environment variables that deliberately
